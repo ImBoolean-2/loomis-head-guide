@@ -6,6 +6,7 @@
 | `head-front.png`, `head-three-quarter.png`, `head-back.png` | Real renders at 800×800 |
 | `zone-colors.png` | Front render showing the per-zone colours |
 | `hair-patterns.png` | Real renders of straight/zigzag/spiky/curly hair |
+| `promo.png` | 1800×1200 promotional image: real head renders + panel mockup |
 | `panel.png` | Screenshot of the HTML panel mockup (not a real Krita screenshot) |
 | `panel-preview.html` | Browser mockup of the panel layout |
 
