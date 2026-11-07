@@ -1,0 +1,34 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generator tests
+        working-directory: loomis_head
+        run: python -m unittest test_generator.py -v
+
+      - name: Translations and UI XML
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          base = json.loads(pathlib.Path("loomis_head/translations/en.json").read_text(encoding="utf-8"))
+          for path in sorted(pathlib.Path("loomis_head/translations").glob("*.json")):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              assert set(data) == set(base), f"{path} keys differ from en.json"
+          ET.parse("loomis_head/ui/LoomisDocker.ui")
+          print(f"translations OK ({len(base)} keys), UI XML OK")
+          PY

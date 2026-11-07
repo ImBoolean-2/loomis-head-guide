@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #1b1b1b; --panel: #242424; --card: #2b2b2b;
+    --line: #3a3a3a; --text: #e6e6e6; --muted: #9a9a9a;
+    --accent: #6A54E7; --green: #8fd14f; --orange: #E76A54; --cyan: #54C4E7; --yellow: #E7C454;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "DejaVu Sans", system-ui, sans-serif; }
+  .panel { width: 380px; padding: 14px; }
+  h1 { font-size: 15px; margin: 0 0 12px; font-weight: 600; letter-spacing: .2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { color: var(--muted); font-size: 11px; min-width: 62px; }
+  .combo { flex: 1; background: #333; border: 1px solid #4a4a4a; border-radius: 4px; padding: 5px 7px; font-size: 11px; color: var(--text); }
+  .btn { background: #333; border: 1px solid #4a4a4a; border-radius: 4px; color: var(--text); font-size: 11px; padding: 5px 8px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 16px; }
+  .val { color: var(--muted); font-size: 10px; min-width: 42px; text-align: right; }
+  .head { width: 100%; display: block; border-radius: 6px; background: #151515; border: 1px solid var(--line); }
+  .preview { display: flex; gap: 10px; align-items: center; }
+  .axes { width: 64px; }
+  .axes .row { margin: 4px 0; gap: 4px; }
+  .axes label { min-width: 12px; }
+  .axes .combo { padding: 4px 2px; text-align: center; }
+  .section { font-size: 12px; font-weight: 700; color: #fff; margin: 10px 0 4px; }
+  .hint { color: var(--muted); font-size: 10px; line-height: 1.4; }
+  .chips { display: flex; gap: 5px; margin-top: 8px; }
+  .chip { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #555; }
+  .credit { color: var(--muted); font-size: 9px; line-height: 1.4; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>Loomis Head Guide</h1>
+
+  <div class="card">
+    <div class="row"><label>Cabeza</label><div class="combo">Loomis Head 1 ▾</div><button class="btn">+</button><button class="btn">−</button></div>
+    <div class="preview">
+      <div class="axes">
+        <div class="row"><label>X</label><div class="combo">17°</div></div>
+        <div class="row"><label>Y</label><div class="combo">43°</div></div>
+        <div class="row"><label>Z</label><div class="combo">−22°</div></div>
+      </div>
+      <img class="head" src="head-front.png" alt="Loomis head preview">
+    </div>
+    <div class="hint">Arrastra para orbitar · Shift: roll · rueda: zoom</div>
+  </div>
+
+  <div class="card">
+    <div class="section">Transformación</div>
+    <div class="row"><label>Posición X</label><input type="range" min="0" max="800" value="480"><span class="val">480 px</span></div>
+    <div class="row"><label>Posición Y</label><input type="range" min="0" max="800" value="390"><span class="val">390 px</span></div>
+    <div class="row"><label>Rotación X</label><input type="range" min="-180" max="180" value="17"><span class="val">17°</span></div>
+    <div class="row"><label>Rotación Y</label><input type="range" min="-180" max="180" value="43"><span class="val">43°</span></div>
+    <div class="row"><label>Rotación Z</label><input type="range" min="-180" max="180" value="-22"><span class="val">−22°</span></div>
+  </div>
+
+  <div class="card">
+    <div class="section">Biblioteca</div>
+    <div class="row"><div class="combo">Cabeza base ▾</div><button class="btn">Guardar</button><button class="btn">Borrar</button></div>
+    <div class="row"><div class="combo">Personaje (Grimorio) ▾</div><button class="btn">Guardar en OC</button></div>
+    <div class="row"><button class="btn">Cargar cabeza…</button><button class="btn">Exportar cabeza…</button></div>
+    <div class="chips"><span class="chip" style="background:#6A54E7"></span><span class="chip" style="background:#E76A54"></span><span class="chip" style="background:#54C4E7"></span><span class="chip" style="background:#E7C454"></span><span class="chip" style="background:#B07A52"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="section">Rasgos y caricatura</div>
+    <div class="row"><label>Cráneo</label><input type="range" min="60" max="160" value="118"><span class="val">118%</span></div>
+    <div class="row"><label>Mandíbula</label><input type="range" min="40" max="160" value="82"><span class="val">82%</span></div>
+    <div class="row"><label>Pómulo</label><input type="range" min="0" max="100" value="55"><span class="val">55%</span></div>
+    <div class="row"><label>Línea ojos</label><input type="range" min="35" max="65" value="47"><span class="val">47%</span></div>
+    <div class="row"><label>Tamaño ojos</label><input type="range" min="2" max="30" value="13"><span class="val">13%</span></div>
+  </div>
+
+  <div class="card">
+    <div class="section">Pelo</div>
+    <div class="row"><label>Línea</label><input type="range" min="55" max="85" value="68"><span class="val">68%</span></div>
+    <div class="row"><label>Arco</label><input type="range" min="0" max="20" value="6"><span class="val">6%</span></div>
+    <div class="row"><label>Raya</label><div class="combo">Zigzag ▾</div></div>
+    <div class="row"><label>Textura</label><div class="combo">Ondulada ▾</div></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><label>Idioma</label><div class="combo">Español ▾</div></div>
+    <div class="credit">Original: lm0ss · Fork: Nedeljko Umjetnik · Mejoras: imboolean</div>
+  </div>
+</div>
+</body>
+</html>

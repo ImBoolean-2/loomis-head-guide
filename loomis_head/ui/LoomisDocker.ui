@@ -1,0 +1,619 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+    <class>LoomisDockerForm</class>
+    <widget class="QWidget" name="LoomisDockerForm">
+        <property name="windowTitle">
+            <string>Loomis Method Head Guide</string>
+        </property>
+
+        <layout class="QVBoxLayout" name="outerLayout"><property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property><item><widget class="QScrollArea" name="scrollArea"><property name="widgetResizable"><bool>true</bool></property><property name="frameShape"><enum>QFrame::NoFrame</enum></property><property name="horizontalScrollBarPolicy"><enum>Qt::ScrollBarAlwaysOff</enum></property><widget class="QWidget" name="scrollAreaWidgetContents"><layout class="QVBoxLayout" name="verticalLayout">
+            <property name="sizeConstraint">
+                <enum>QLayout::SetMinimumSize</enum>
+            </property>
+            <property name="leftMargin">
+                <number>10</number>
+            </property>
+            <property name="topMargin">
+                <number>10</number>
+            </property>
+            <property name="rightMargin">
+                <number>10</number>
+            </property>
+            <property name="bottomMargin">
+                <number>10</number>
+            </property>
+
+            
+            <item><layout class="QHBoxLayout" name="guideRow"><item><widget class="QLabel" name="labelGuide"><property name="text"><string>Head</string></property></widget></item><item><widget class="QComboBox" name="guideCombo" /></item><item><widget class="QPushButton" name="guideNewButton"><property name="text"><string>+</string></property><property name="toolTip"><string>New head</string></property></widget></item><item><widget class="QPushButton" name="guideDeleteButton"><property name="text"><string>−</string></property><property name="toolTip"><string>Delete head</string></property></widget></item></layout></item><item><layout class="QHBoxLayout" name="previewRow"><item><layout class="QVBoxLayout" name="axisColumn"><item><widget class="QLabel" name="labelRot"><property name="text"><string>Rot:</string></property></widget></item><item><widget class="QSpinBox" name="rotXSpin"><property name="minimum"><number>-180</number></property><property name="maximum"><number>180</number></property><property name="singleStep"><number>1</number></property><property name="value"><number>0</number></property><property name="prefix"><string>X </string></property><property name="suffix"><string>°</string></property></widget></item><item><widget class="QSpinBox" name="rotYSpin"><property name="minimum"><number>-180</number></property><property name="maximum"><number>180</number></property><property name="singleStep"><number>1</number></property><property name="value"><number>0</number></property><property name="prefix"><string>Y </string></property><property name="suffix"><string>°</string></property></widget></item><item><widget class="QSpinBox" name="rotZSpin"><property name="minimum"><number>-180</number></property><property name="maximum"><number>180</number></property><property name="singleStep"><number>1</number></property><property name="value"><number>0</number></property><property name="prefix"><string>Z </string></property><property name="suffix"><string>°</string></property></widget></item></layout></item><item><widget class="QWidget" name="trackballHost" native="true">
+                    <property name="sizePolicy">
+                        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+                            <horstretch>0</horstretch>
+                            <verstretch>1</verstretch>
+                        </sizepolicy>
+                    </property>
+                    <property name="minimumSize">
+                        <size>
+                            <width>160</width>
+                            <height>160</height>
+                        </size>
+                    </property>
+                </widget>
+            </item></layout></item><item>
+                <widget class="QFrame" name="separatorTop">
+                    <property name="frameShape">
+                        <enum>QFrame::HLine</enum>
+                    </property>
+                    <property name="frameShadow">
+                        <enum>QFrame::Sunken</enum>
+                    </property>
+                </widget>
+            </item>
+
+            
+            <item>
+                <spacer name="spacerBelowTrackball">
+                    <property name="orientation">
+                        <enum>Qt::Vertical</enum>
+                    </property>
+                    <property name="sizeType">
+                        <enum>QSizePolicy::Fixed</enum>
+                    </property>
+                    <property name="sizeHint" stdset="0">
+                        <size>
+                            <width>20</width>
+                            <height>8</height>
+                        </size>
+                    </property>
+                </spacer>
+            </item>
+
+            
+            <item><layout class="QHBoxLayout" name="viewRow"><item><widget class="QLabel" name="labelView"><property name="text"><string>View</string></property></widget></item><item><widget class="QComboBox" name="viewCombo" /></item></layout></item><item>
+                <widget class="QGroupBox" name="presetGroup">
+                    <property name="title">
+                        <string>Biblioteca</string>
+                    </property>
+                    <layout class="QVBoxLayout" name="presetLayout">
+                        <item>
+                            <layout class="QHBoxLayout" name="presetRow">
+                                <item>
+                                    <widget class="QComboBox" name="presetCombo">
+                                        <property name="editable">
+                                            <bool>true</bool>
+                                        </property>
+                                        <property name="insertPolicy">
+                                            <enum>QComboBox::NoInsert</enum>
+                                        </property>
+                                    </widget>
+                                </item>
+                                <item>
+                                    <widget class="QPushButton" name="presetSaveButton">
+                                        <property name="text">
+                                            <string>Guardar</string>
+                                        </property>
+                                    </widget>
+                                </item>
+                                <item>
+                                    <widget class="QPushButton" name="presetDeleteButton">
+                                        <property name="text">
+                                            <string>Borrar</string>
+                                        </property>
+                                    </widget>
+                                </item>
+                            </layout>
+                        </item>
+                        <item>
+                            <layout class="QHBoxLayout" name="ocRow">
+                                <item>
+                                    <widget class="QComboBox" name="ocCombo" />
+                                </item>
+                                <item>
+                                    <widget class="QPushButton" name="ocSaveButton">
+                                        <property name="text">
+                                            <string>Guardar en OC</string>
+                                        </property>
+                                    </widget>
+                                </item>
+                            </layout>
+                        </item>
+                        <item><layout class="QHBoxLayout" name="fileRow"><item><widget class="QPushButton" name="headLoadButton"><property name="text"><string>Load head...</string></property></widget></item><item><widget class="QPushButton" name="headSaveButton"><property name="text"><string>Export head...</string></property></widget></item></layout></item><item>
+                            <widget class="QLabel" name="presetStatus">
+                                <property name="text">
+                                    <string>Sin presets</string>
+                                </property>
+                                <property name="wordWrap">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                    </layout>
+                </widget>
+            </item>
+
+            
+            <item>
+                <layout class="QFormLayout" name="formLayout">
+                    <property name="fieldGrowthPolicy">
+                        <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+                    </property>
+                    <property name="labelAlignment">
+                        <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+                    </property>
+                    <property name="rowWrapPolicy">
+                        <enum>QFormLayout::DontWrapRows</enum>
+                    </property>
+                    <property name="labelAlignment">
+                        <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                    </property>
+                    <property name="formAlignment">
+                        <set>Qt::AlignLeft|Qt::AlignTop</set>
+                    </property>
+                    <property name="horizontalSpacing">
+                        <number>12</number>
+                    </property>
+                    <property name="verticalSpacing">
+                        <number>8</number>
+                    </property>
+
+                    
+                    <item row="0" column="0">
+                        <widget class="QLabel" name="labelScale">
+                            <property name="text">
+                                <string>&amp;Scale:</string>
+                            </property>
+                            <property name="alignment">
+                                <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                            </property>
+                            <property name="buddy">
+                                <cstring>sizeSlider</cstring>
+                            </property>
+                        </widget>
+                    </item>
+                    <item row="0" column="1">
+                        <widget class="QSlider" name="sizeSlider">
+                            <property name="sizePolicy">
+                                <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                                    <horstretch>0</horstretch>
+                                    <verstretch>0</verstretch>
+                                </sizepolicy>
+                            </property>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="minimum">
+                                <number>10</number>
+                            </property>
+                            <property name="maximum">
+                                <number>200</number>
+                            </property>
+                            <property name="value">
+                                <number>40</number>
+                            </property>
+                            <property name="singleStep">
+                                <number>1</number>
+                            </property>
+                            <property name="pageStep">
+                                <number>5</number>
+                            </property>
+                        </widget>
+                    </item>
+
+                    
+                    <item row="1" column="0">
+                        <widget class="QLabel" name="labelSideCut">
+                            <property name="text">
+                                <string>Side cut:</string>
+                            </property>
+                            <property name="alignment">
+                                <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                            </property>
+                            <property name="buddy">
+                                <cstring>sideCutSlider</cstring>
+                            </property>
+                        </widget>
+                    </item>
+                    <item row="1" column="1">
+                        <widget class="QSlider" name="sideCutSlider">
+                            <property name="sizePolicy">
+                                <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                                    <horstretch>0</horstretch>
+                                    <verstretch>0</verstretch>
+                                </sizepolicy>
+                            </property>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="minimum">
+                                <number>5</number>
+                            </property>
+                            <property name="maximum">
+                                <number>95</number>
+                            </property>
+                            <property name="value">
+                                <number>66</number>
+                            </property>
+                            <property name="singleStep">
+                                <number>1</number>
+                            </property>
+                            <property name="pageStep">
+                                <number>5</number>
+                            </property>
+                        </widget>
+                    </item>
+
+                    
+                    <item row="2" column="0">
+                        <widget class="QLabel" name="labelFrontStroke">
+                            <property name="text">
+                                <string>Front stroke:</string>
+                            </property>
+                            <property name="alignment">
+                                <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                            </property>
+                            <property name="buddy">
+                                <cstring>frontStrokeSlider</cstring>
+                            </property>
+                        </widget>
+                    </item>
+                    <item row="2" column="1">
+                        <widget class="QSlider" name="frontStrokeSlider">
+                            <property name="sizePolicy">
+                                <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                                    <horstretch>0</horstretch>
+                                    <verstretch>0</verstretch>
+                                </sizepolicy>
+                            </property>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="minimum">
+                                <number>1</number>
+                            </property>
+                            <property name="maximum">
+                                <number>12</number>
+                            </property>
+                            <property name="value">
+                                <number>6</number>
+                            </property>
+                            <property name="singleStep">
+                                <number>1</number>
+                            </property>
+                            <property name="pageStep">
+                                <number>1</number>
+                            </property>
+                        </widget>
+                    </item>
+
+                    
+                    <item row="3" column="0">
+                        <widget class="QLabel" name="labelBackStroke">
+                            <property name="text">
+                                <string>Back stroke:</string>
+                            </property>
+                            <property name="alignment">
+                                <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                            </property>
+                            <property name="buddy">
+                                <cstring>backStrokeSlider</cstring>
+                            </property>
+                        </widget>
+                    </item>
+                    <item row="3" column="1">
+                        <widget class="QSlider" name="backStrokeSlider">
+                            <property name="sizePolicy">
+                                <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                                    <horstretch>0</horstretch>
+                                    <verstretch>0</verstretch>
+                                </sizepolicy>
+                            </property>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="minimum">
+                                <number>0</number>
+                            </property>
+                            <property name="maximum">
+                                <number>12</number>
+                            </property>
+                            <property name="value">
+                                <number>5</number>
+                            </property>
+                            <property name="singleStep">
+                                <number>1</number>
+                            </property>
+                            <property name="pageStep">
+                                <number>1</number>
+                            </property>
+                        </widget>
+                    </item>
+                    
+                    <item row="4" column="0">
+                        <widget class="QLabel" name="labelFaceAge">
+                            <property name="text"><string>Face length:</string></property>
+                            <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+                            <property name="buddy"><cstring>faceAgeSlider</cstring></property>
+                        </widget>
+                    </item>
+                    <item row="4" column="1">
+                        <widget class="QSlider" name="faceAgeSlider">
+                            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                            <property name="minimum"><number>0</number></property>
+                            <property name="maximum"><number>100</number></property>
+                            <property name="value"><number>75</number></property>
+                            <property name="singleStep"><number>1</number></property>
+                            <property name="pageStep"><number>5</number></property>
+                            <property name="toolTip"><string>Child at 0, adult at 100. Only the added face guides change.</string></property>
+                        </widget>
+                    </item>
+                    <item row="5" column="0">
+                        <widget class="QLabel" name="labelChinWidth">
+                            <property name="text"><string>Face width:</string></property>
+                            <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+                            <property name="buddy"><cstring>chinWidthSlider</cstring></property>
+                        </widget>
+                    </item>
+                    <item row="5" column="1">
+                        <widget class="QSlider" name="chinWidthSlider">
+                            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                            <property name="minimum"><number>50</number></property>
+                            <property name="maximum"><number>150</number></property>
+                            <property name="value"><number>100</number></property>
+                            <property name="singleStep"><number>1</number></property>
+                            <property name="pageStep"><number>5</number></property>
+                            <property name="toolTip"><string>Narrow at 50, original width at 100, wider at 150.</string></property>
+                        </widget>
+                    </item>
+
+                    
+                    <item row="6" column="0">
+                        <widget class="QLabel" name="labelPositionX">
+                            <property name="text"><string>Position X:</string></property>
+                            <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+                            <property name="buddy"><cstring>positionXSpinBox</cstring></property>
+                        </widget>
+                    </item>
+                    <item row="6" column="1">
+                        <widget class="QSpinBox" name="positionXSpinBox">
+                            <property name="minimum"><number>-100000</number></property>
+                            <property name="maximum"><number>100000</number></property>
+                            <property name="value"><number>0</number></property>
+                            <property name="singleStep"><number>1</number></property>
+                            <property name="suffix"><string> px</string></property>
+                            <property name="toolTip"><string>Horizontal position in document pixels. Use the arrows for precise adjustments.</string></property>
+                        </widget>
+                    </item>
+                    <item row="7" column="0">
+                        <widget class="QLabel" name="labelPositionY">
+                            <property name="text"><string>Position Y:</string></property>
+                            <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+                            <property name="buddy"><cstring>positionYSpinBox</cstring></property>
+                        </widget>
+                    </item>
+                    <item row="7" column="1">
+                        <widget class="QSpinBox" name="positionYSpinBox">
+                            <property name="minimum"><number>-100000</number></property>
+                            <property name="maximum"><number>100000</number></property>
+                            <property name="value"><number>0</number></property>
+                            <property name="singleStep"><number>1</number></property>
+                            <property name="suffix"><string> px</string></property>
+                            <property name="toolTip"><string>Vertical position in document pixels. Use the arrows for precise adjustments.</string></property>
+                        </widget>
+                    </item>
+
+                    
+                    <item row="8" column="0">
+                        <widget class="QLabel" name="labelStrokeColor">
+                            <property name="text">
+                                <string>Stroke color:</string>
+                            </property>
+                            <property name="alignment">
+                                <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                            </property>
+                        </widget>
+                    </item>
+                    <item row="8" column="1">
+                        <layout class="QHBoxLayout" name="strokeColorLayout">
+                            <property name="spacing">
+                                <number>6</number>
+                            </property>
+                            <item>
+                                <widget class="QFrame" name="strokeColorSwatch">
+                                    <property name="minimumSize">
+                                        <size>
+                                            <width>28</width>
+                                            <height>18</height>
+                                        </size>
+                                    </property>
+                                    <property name="styleSheet">
+                                        <string notr="true">background-color: #6A54E7; border: 1px
+                                            solid #666;</string>
+                                    </property>
+                                    <property name="frameShape">
+                                        <enum>QFrame::Panel</enum>
+                                    </property>
+                                    <property name="frameShadow">
+                                        <enum>QFrame::Sunken</enum>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <widget class="QPushButton" name="strokeColorButton">
+                                    <property name="text">
+                                        <string>Choose…</string>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <spacer name="strokeColorStretch">
+                                    <property name="orientation">
+                                        <enum>Qt::Horizontal</enum>
+                                    </property>
+                                    <property name="sizeType">
+                                        <enum>QSizePolicy::Expanding</enum>
+                                    </property>
+                                </spacer>
+                            </item>
+                        </layout>
+                    </item>
+
+                </layout>
+
+            </item>
+
+            
+            <item>
+                <widget class="QGroupBox" name="groupGuides">
+                    <property name="title">
+                        <string>Guides</string>
+                    </property>
+                    <property name="sizePolicy">
+                        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+                            <horstretch>0</horstretch>
+                            <verstretch>0</verstretch>
+                        </sizepolicy>
+                    </property>
+                    <layout class="QVBoxLayout" name="guidesLayout">
+                        <property name="leftMargin">
+                            <number>8</number>
+                        </property>
+                        <property name="topMargin">
+                            <number>6</number>
+                        </property>
+                        <property name="rightMargin">
+                            <number>8</number>
+                        </property>
+                        <property name="bottomMargin">
+                            <number>6</number>
+                        </property>
+                        <property name="spacing">
+                            <number>4</number>
+                        </property>
+                        <item>
+                            <widget class="QCheckBox" name="showFace">
+                                <property name="text">
+                                    <string>Show Face</string>
+                                </property>
+                                <property name="checked">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QCheckBox" name="showSilhouette">
+                                <property name="text">
+                                    <string>Show Silhouette</string>
+                                </property>
+                                <property name="checked">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QCheckBox" name="showSideRims">
+                                <property name="text">
+                                    <string>Show Side Rims</string>
+                                </property>
+                                <property name="checked">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QCheckBox" name="showSideCross">
+                                <property name="text">
+                                    <string>Show Side Cross</string>
+                                </property>
+                                <property name="checked">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                        <item>
+                            <widget class="QCheckBox" name="showArrow">
+                                <property name="text">
+                                    <string>Show Arrow</string>
+                                </property>
+                                <property name="checked">
+                                    <bool>true</bool>
+                                </property>
+                            </widget>
+                        </item>
+                    <item><widget class="QCheckBox" name="zoneColors"><property name="text"><string>Zone colors</string></property><property name="toolTip"><string>Cranium violet, jaw orange, cheek cyan, features yellow, side guides grey.</string></property></widget></item></layout>
+                </widget>
+            </item>
+
+            <item>
+                <widget class="QPushButton" name="featuresButton">
+                    <property name="text">
+                        <string>Rasgos y caricatura...</string>
+                    </property>
+                </widget>
+            </item>
+
+            
+            <item>
+                <layout class="QHBoxLayout" name="rowActions">
+                    <property name="leftMargin">
+                        <number>0</number>
+                    </property>
+                    <property name="rightMargin">
+                        <number>0</number>
+                    </property>
+                    <item>
+                        <layout class="QHBoxLayout" name="actions">
+                            <property name="spacing">
+                                <number>6</number>
+                            </property>
+                            <item>
+                                <widget class="QPushButton" name="resetButton">
+                                    <property name="text">
+                                        <string>Reset Rotation</string>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <widget class="QPushButton" name="resetPositionButton">
+                                    <property name="text">
+                                        <string>Reset Position</string>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <widget class="QPushButton" name="resetSettingsButton">
+                                    <property name="text">
+                                        <string>Reset Settings</string>
+                                    </property>
+                                </widget>
+                            </item>
+                            <item>
+                                <widget class="QPushButton" name="saveButton">
+                                    <property name="text">
+                                        <string>Aplicar al lienzo</string>
+                                    </property>
+                                </widget>
+                            </item>
+                        </layout>
+                    </item>
+                </layout>
+            </item>
+
+            
+            <item>
+                <widget class="QLabel" name="creditLabel">
+                    <property name="text">
+                        <string>Based on the Loomis Head Generator by lm0ss. Modified by Nedeljko Umjetnik.</string>
+                    </property>
+                    <property name="wordWrap">
+                        <bool>true</bool>
+                    </property>
+                    <property name="alignment">
+                        <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                    </property>
+                </widget>
+            </item>
+
+        </layout>
+    </widget></widget></item></layout></widget>
+    <resources />
+    <connections />
+</ui>
