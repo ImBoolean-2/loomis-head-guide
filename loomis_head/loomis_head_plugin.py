@@ -86,6 +86,7 @@ class LoomisProportionsDocker(DockWidget):
         self._presets = {"version": 1, "presets": {}, "characters": {}}
         self._presets_path = self._preset_path()
         self.feature_panel = None
+        self.hair_panel = None
         self._slider_sync = False
         self._characters = []
         self._heads = {}
@@ -271,6 +272,8 @@ class LoomisProportionsDocker(DockWidget):
             self._sync_euler_from_model()
             if self.feature_panel is not None:
                 self.feature_panel.set_model(self.loomis_head)
+            if self.hair_panel is not None:
+                self.hair_panel.set_model(self.loomis_head)
         self._save_doc_state()
 
     def _load_guides(self, doc, saved: dict) -> None:
@@ -430,6 +433,8 @@ class LoomisProportionsDocker(DockWidget):
         self._last_layer_bounds_center = guide.last_center
         if self.feature_panel is not None:
             self.feature_panel.set_model(self.loomis_head)
+        if self.hair_panel is not None:
+            self.hair_panel.set_model(self.loomis_head)
         try:
             if self.doc is not None:
                 self.doc.setActiveNode(guide.layer)
@@ -485,6 +490,8 @@ class LoomisProportionsDocker(DockWidget):
             self._sync_euler_from_model()
             if self.feature_panel is not None:
                 self.feature_panel.set_model(self.loomis_head)
+            if self.hair_panel is not None:
+                self.hair_panel.set_model(self.loomis_head)
             self.schedule_update()
         self._save_doc_state()
 
@@ -549,6 +556,8 @@ class LoomisProportionsDocker(DockWidget):
             self._sync_euler_from_model()
             if self.feature_panel is not None:
                 self.feature_panel.set_model(self.loomis_head)
+            if self.hair_panel is not None:
+                self.hair_panel.set_model(self.loomis_head)
             self._refresh_guide_combo()
             return
         key = doc.fileName() or f"unsaved:{id(doc)}"
@@ -1392,6 +1401,8 @@ class LoomisProportionsDocker(DockWidget):
         self._sync_euler_from_model()
         if self.feature_panel is not None:
             self.feature_panel.sync_from_model()
+        if self.hair_panel is not None:
+            self.hair_panel.sync_from_model()
         self.schedule_update()
 
     def _sync_ui_from_model(self) -> None:
