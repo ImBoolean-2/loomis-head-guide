@@ -191,6 +191,241 @@ class GeneratorTests(unittest.TestCase):
         payload = json.dumps(LoomisHead3D().to_dict())
         self.assertIn('"version": 1', payload)
 
+    # --- 0.6.0: proporciones, guias, ritmo y luz -------------------------
+
+    def test_proportion_defaults(self):
+        head = LoomisHead3D()
+        self.assertEqual(head.forehead_height, 1.0)
+        self.assertEqual(head.jaw_angle, 0.0)
+        self.assertEqual(head.cranium_width, 1.0)
+        self.assertEqual(head.cranium_height, 1.0)
+        self.assertEqual(head.cheekbone_height, 0.5)
+        self.assertEqual(head.chin_sharpness, 0.0)
+        self.assertFalse(head.show_rhythm)
+        self.assertEqual(head.rhythm_strength, 0.6)
+
+    def test_proportion_clamps(self):
+        head = LoomisHead3D()
+        head.set_forehead_height(99)
+        self.assertEqual(head.forehead_height, 1.4)
+        head.set_forehead_height(-99)
+        self.assertEqual(head.forehead_height, 0.6)
+        head.set_jaw_angle(9)
+        self.assertEqual(head.jaw_angle, 1.0)
+        head.set_cranium_width(0.0)
+        self.assertEqual(head.cranium_width, 0.8)
+        head.set_cranium_height(9.0)
+        self.assertEqual(head.cranium_height, 1.2)
+        head.set_cheekbone_height(-1)
+        self.assertEqual(head.cheekbone_height, 0.0)
+        head.set_chin_sharpness(2)
+        self.assertEqual(head.chin_sharpness, 1.0)
+        head.set_rhythm_strength(2)
+        self.assertEqual(head.rhythm_strength, 1.0)
+
+    def test_proportion_extremes_render(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        head.set_show_hair(True)
+        cases = [
+            (head.set_forehead_height, (0.6, 1.4)),
+            (head.set_jaw_angle, (0.0, 1.0)),
+            (head.set_cranium_width, (0.8, 1.2)),
+            (head.set_cranium_height, (0.8, 1.2)),
+            (head.set_cheekbone_height, (0.0, 1.0)),
+            (head.set_chin_sharpness, (0.0, 1.0)),
+        ]
+        for setter, values in cases:
+            for value in values:
+                setter(value)
+                svg = head.build_svg(800, 800)
+                self.assertIn("<svg", svg)
+                self.assertNotIn("nan", svg.lower())
+                self.assertNotIn("inf", svg.lower())
+
+    def test_cranium_scales_geometry(self):
+        head = LoomisHead3D()
+        base = head.build_svg(800, 800)
+        head.set_cranium_width(1.2)
+        wide = head.build_svg(800, 800)
+        self.assertNotEqual(base, wide)
+        head.set_cranium_width(1.0)
+        head.set_cranium_height(1.2)
+        tall = head.build_svg(800, 800)
+        self.assertNotEqual(base, tall)
+        self.assertNotIn("nan", tall.lower())
+
+    def test_forehead_height_moves_hairline(self):
+        head = LoomisHead3D()
+        head.set_show_hair(True)
+        head.set_forehead_height(0.6)
+        low = head.build_svg(800, 800)
+        head.set_forehead_height(1.4)
+        high = head.build_svg(800, 800)
+        self.assertNotEqual(low, high)
+        self.assertNotIn("nan", high.lower())
+
+    def test_chin_sharpness_changes_jaw(self):
+        head = LoomisHead3D()
+        round_chin = head.build_svg(800, 800)
+        head.set_chin_sharpness(1.0)
+        point_chin = head.build_svg(800, 800)
+        self.assertNotEqual(round_chin, point_chin)
+        self.assertNotIn("nan", point_chin.lower())
+
+    def test_rhythm_zone(self):
+        head = LoomisHead3D()
+        head.set_zone_colors(True)
+        head.set_show_rhythm(True)
+        svg = head.build_svg(800, 800)
+        self.assertIn("#D96A8A", svg)
+        head.set_show_rhythm(False)
+        svg = head.build_svg(800, 800)
+        self.assertNotIn("#D96A8A", svg)
+
+    def test_rhythm_strength_changes_curves(self):
+        head = LoomisHead3D()
+        head.set_show_rhythm(True)
+        head.set_rhythm_strength(0.0)
+        weak = head.build_svg(800, 800)
+        head.set_rhythm_strength(1.0)
+        strong = head.build_svg(800, 800)
+        self.assertNotEqual(weak, strong)
+
+    def test_rhythm_central_curve_passes_landmarks(self):
+        head = LoomisHead3D()
+        head.set_show_rhythm(True)
+        rc = head.radius * head.cranium
+        brow_y = (head.brow_line - 0.5) * 2.0 * rc
+        nose_y = (head.nose_line - 0.5) * 2.0 * rc - head.nose_length * rc
+        mouth_y = (head.mouth_line - 0.5) * 2.0 * rc
+        curves = head._rhythm_curves(rc)
+        self.assertGreaterEqual(len(curves), 4)
+        central = curves[0]
+        self.assertTrue(central)
+        for target in (brow_y, nose_y, mouth_y):
+            nearest = min(abs(point.y - target) for point in central)
+            self.assertLess(nearest, 0.02 * rc)
+        # La curva central baja de la corona al menton y no se va de la esfera
+        # en el tramo de los rasgos.
+        self.assertGreater(central[0].y, 0.9 * rc)
+        self.assertLess(central[-1].y, mouth_y)
+        for point in central:
+            self.assertFalse(math.isnan(point.x + point.y + point.z))
+
+    def test_rhythm_strength_changes_arcs(self):
+        head = LoomisHead3D()
+        head.set_show_rhythm(True)
+        rc = head.radius * head.cranium
+        head.set_rhythm_strength(0.0)
+        weak = head._rhythm_curves(rc)
+        head.set_rhythm_strength(1.0)
+        strong = head._rhythm_curves(rc)
+        self.assertNotEqual(weak[1][0].x, strong[1][0].x)
+        self.assertNotEqual([p.z for p in weak[0]], [p.z for p in strong[0]])
+
+    def test_guide_toggles(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        all_on = head.build_svg(800, 800)
+        for setter in (
+            head.set_show_brow_guide,
+            head.set_show_eye_guide,
+            head.set_show_nose_guide,
+            head.set_show_mouth_guide,
+        ):
+            before = head.build_svg(800, 800)
+            setter(False)
+            after = head.build_svg(800, 800)
+            self.assertLess(len(after), len(before))
+        self.assertLess(len(head.build_svg(800, 800)), len(all_on))
+        head.set_show_features(False)
+        self.assertLess(len(head.build_svg(800, 800)), len(all_on))
+
+    def test_guide_defaults(self):
+        head = LoomisHead3D()
+        for name in ("show_brow_guide", "show_eye_guide",
+                     "show_nose_guide", "show_mouth_guide"):
+            self.assertTrue(getattr(head, name))
+
+    def test_light_defaults_and_clamps(self):
+        head = LoomisHead3D()
+        self.assertEqual(head.light_azimuth, -35.0)
+        self.assertEqual(head.light_elevation, 35.0)
+        self.assertEqual(head.light_intensity, 0.35)
+        self.assertFalse(head.show_shadow)
+        self.assertEqual(head.shadow_mode, 0)
+        head.set_light_azimuth(-999)
+        self.assertEqual(head.light_azimuth, -180.0)
+        head.set_light_elevation(999)
+        self.assertEqual(head.light_elevation, 90.0)
+        head.set_light_intensity(9)
+        self.assertEqual(head.light_intensity, 1.0)
+        head.set_shadow_mode(5)
+        self.assertEqual(head.shadow_mode, 1)
+        head.set_show_shadow(True)
+        self.assertTrue(head.show_shadow)
+
+    def test_new_fields_roundtrip(self):
+        head = LoomisHead3D()
+        head.set_forehead_height(1.25)
+        head.set_jaw_angle(0.8)
+        head.set_cranium_width(1.1)
+        head.set_cranium_height(0.9)
+        head.set_cheekbone_height(0.7)
+        head.set_chin_sharpness(0.6)
+        head.set_show_rhythm(True)
+        head.set_rhythm_strength(0.9)
+        head.set_show_brow_guide(False)
+        head.set_show_nose_guide(False)
+        head.set_light_azimuth(40.0)
+        head.set_light_elevation(-10.0)
+        head.set_light_intensity(0.8)
+        head.set_show_shadow(True)
+        head.set_shadow_mode(1)
+        clone = LoomisHead3D()
+        clone.from_dict(head.to_dict())
+        self.assertEqual(head.to_dict(), clone.to_dict())
+        self.assertEqual(head.build_svg(900, 700), clone.build_svg(900, 700))
+
+    def test_dict_051_compatibility(self):
+        # Preset de 0.5.1: sin ninguna clave nueva.
+        legacy = {
+            "version": 1,
+            "generator": "loomis",
+            "model": "loomis",
+            "scale": 1.0,
+            "sideCut": 0.66,
+            "faceAge": 1.0,
+            "chinWidth": 1.0,
+            "cranium": 1.0,
+            "jawTaper": 1.0,
+            "cheek": 0.0,
+            "faceWidth": 1.0,
+            "jawDrop": 1.0,
+            "showFeatures": True,
+            "browLine": 0.62,
+            "eyeLine": 0.5,
+            "noseLine": 0.32,
+            "mouthLine": 0.18,
+        }
+        head = LoomisHead3D()
+        head.from_dict(legacy)
+        svg = head.build_svg(800, 800)
+        self.assertIn("<svg", svg)
+        self.assertNotIn("nan", svg.lower())
+        self.assertEqual(head.forehead_height, 1.0)
+        self.assertEqual(head.jaw_angle, 0.0)
+        self.assertEqual(head.cranium_width, 1.0)
+        self.assertEqual(head.cranium_height, 1.0)
+        self.assertEqual(head.cheekbone_height, 0.5)
+        self.assertEqual(head.chin_sharpness, 0.0)
+        self.assertFalse(head.show_rhythm)
+        self.assertEqual(head.rhythm_strength, 0.6)
+        self.assertTrue(head.show_brow_guide)
+        self.assertFalse(head.show_shadow)
+        self.assertEqual(head.shadow_mode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

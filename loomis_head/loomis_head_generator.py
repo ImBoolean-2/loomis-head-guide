@@ -18,6 +18,7 @@ ZONE_COLORS = {
     "cranium": "#6A54E7",
     "jaw": "#E76A54",
     "cheek": "#54C4E7",
+    "rhythm": "#D96A8A",
     "features": "#E7C454",
     "hair": "#B07A52",
     "side": "#8A8A9A",
@@ -54,6 +55,15 @@ class LoomisHead3D:
         self.cheek: float = 0.0
         self.face_width: float = 1.0
         self.jaw_drop: float = 1.0
+        # Proporciones (0.6.0): frente, mandibula, craneo, pomulo y menton.
+        self.forehead_height: float = 1.0
+        self.jaw_angle: float = 0.0
+        self.cranium_width: float = 1.0
+        self.cranium_height: float = 1.0
+        self.cheekbone_height: float = 0.5
+        self.chin_sharpness: float = 0.0
+        self.show_rhythm: bool = False
+        self.rhythm_strength: float = 0.6
         # Rasgos faciales (lineas de Loomis, cuencas, nariz, orejas, boca, cejas).
         self.show_features: bool = False
         self.show_hair: bool = False
@@ -83,6 +93,11 @@ class LoomisHead3D:
         self.show_mouth: bool = True
         self.show_brows: bool = True
         self.show_face: bool = True
+        # Lineas de guia independientes (0.6.0); show_features sigue apagando todas.
+        self.show_brow_guide: bool = True
+        self.show_eye_guide: bool = True
+        self.show_nose_guide: bool = True
+        self.show_mouth_guide: bool = True
         self.front_line_stroke: float = 10.0
         self.back_line_stroke: float = 7.0
         self.show_arrow: bool = True
@@ -90,6 +105,12 @@ class LoomisHead3D:
         self.show_side_rims: bool = True
         self.show_side_cross: bool = True
         self.stroke_color: str = "#6A54E7"
+        # Luz direccional (0.6.0); la consume loomis_head/light.py.
+        self.light_azimuth: float = -35.0
+        self.light_elevation: float = 35.0
+        self.light_intensity: float = 0.35
+        self.show_shadow: bool = False
+        self.shadow_mode: int = 0
         self.q: Quaternion = q_identity()
 
     def set_quaternion(self, q: Quaternion) -> None:
@@ -127,6 +148,30 @@ class LoomisHead3D:
 
     def set_jaw_drop(self, value: float) -> None:
         self.jaw_drop = max(0.6, min(1.4, float(value)))
+
+    def set_forehead_height(self, value: float) -> None:
+        self.forehead_height = max(0.6, min(1.4, float(value)))
+
+    def set_jaw_angle(self, value: float) -> None:
+        self.jaw_angle = self._clamp01(value)
+
+    def set_cranium_width(self, value: float) -> None:
+        self.cranium_width = max(0.8, min(1.2, float(value)))
+
+    def set_cranium_height(self, value: float) -> None:
+        self.cranium_height = max(0.8, min(1.2, float(value)))
+
+    def set_cheekbone_height(self, value: float) -> None:
+        self.cheekbone_height = self._clamp01(value)
+
+    def set_chin_sharpness(self, value: float) -> None:
+        self.chin_sharpness = self._clamp01(value)
+
+    def set_show_rhythm(self, enable: bool) -> None:
+        self.show_rhythm = bool(enable)
+
+    def set_rhythm_strength(self, value: float) -> None:
+        self.rhythm_strength = self._clamp01(value)
 
     def set_show_features(self, enable: bool) -> None:
         self.show_features = bool(enable)
@@ -215,6 +260,18 @@ class LoomisHead3D:
     def set_show_face(self, enable: bool) -> None:
         self.show_face = bool(enable)
 
+    def set_show_brow_guide(self, enable: bool) -> None:
+        self.show_brow_guide = bool(enable)
+
+    def set_show_eye_guide(self, enable: bool) -> None:
+        self.show_eye_guide = bool(enable)
+
+    def set_show_nose_guide(self, enable: bool) -> None:
+        self.show_nose_guide = bool(enable)
+
+    def set_show_mouth_guide(self, enable: bool) -> None:
+        self.show_mouth_guide = bool(enable)
+
     def set_front_line_stroke(self, front_line_stroke: float) -> None:
         self.front_line_stroke = max(0.5, min(60.0, float(front_line_stroke)))
 
@@ -236,6 +293,26 @@ class LoomisHead3D:
     def set_stroke_color(self, color: str) -> None:
         self.stroke_color = color
 
+    def set_light_azimuth(self, value: float) -> None:
+        self.light_azimuth = max(-180.0, min(180.0, float(value)))
+
+    def set_light_elevation(self, value: float) -> None:
+        self.light_elevation = max(-90.0, min(90.0, float(value)))
+
+    def set_light_intensity(self, value: float) -> None:
+        self.light_intensity = self._clamp01(value)
+
+    def set_show_shadow(self, enable: bool) -> None:
+        self.show_shadow = bool(enable)
+
+    def set_shadow_mode(self, value: int) -> None:
+        self.shadow_mode = max(0, min(1, int(value)))
+
+    def _effective_hair_line(self) -> float:
+        """Linea de nacimiento del pelo ya escalada por forehead_height."""
+        line = self.brow_line + (self.hair_line - self.brow_line) * self.forehead_height
+        return max(0.55, min(0.85, line))
+
     def to_dict(self) -> dict:
         """Estado completo del cabezal, listo para un preset."""
         return {
@@ -254,6 +331,14 @@ class LoomisHead3D:
             "cheek": self.cheek,
             "faceWidth": self.face_width,
             "jawDrop": self.jaw_drop,
+            "foreheadHeight": self.forehead_height,
+            "jawAngle": self.jaw_angle,
+            "craniumWidth": self.cranium_width,
+            "craniumHeight": self.cranium_height,
+            "cheekboneHeight": self.cheekbone_height,
+            "chinSharpness": self.chin_sharpness,
+            "showRhythm": self.show_rhythm,
+            "rhythmStrength": self.rhythm_strength,
             "showFeatures": self.show_features,
             "showHair": self.show_hair,
             "hairLine": self.hair_line,
@@ -282,6 +367,10 @@ class LoomisHead3D:
             "showMouth": self.show_mouth,
             "showBrows": self.show_brows,
             "showFace": self.show_face,
+            "showBrowGuide": self.show_brow_guide,
+            "showEyeGuide": self.show_eye_guide,
+            "showNoseGuide": self.show_nose_guide,
+            "showMouthGuide": self.show_mouth_guide,
             "showArrow": self.show_arrow,
             "showSilhouette": self.show_silhouette,
             "showSideRims": self.show_side_rims,
@@ -289,6 +378,11 @@ class LoomisHead3D:
             "frontStroke": self.front_line_stroke,
             "backStroke": self.back_line_stroke,
             "strokeColor": self.stroke_color,
+            "lightAzimuth": self.light_azimuth,
+            "lightElevation": self.light_elevation,
+            "lightIntensity": self.light_intensity,
+            "showShadow": self.show_shadow,
+            "shadowMode": self.shadow_mode,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -323,6 +417,14 @@ class LoomisHead3D:
         self.set_cheek(num("cheek", self.cheek))
         self.set_face_width(num("faceWidth", self.face_width))
         self.set_jaw_drop(num("jawDrop", self.jaw_drop))
+        self.set_forehead_height(num("foreheadHeight", self.forehead_height))
+        self.set_jaw_angle(num("jawAngle", self.jaw_angle))
+        self.set_cranium_width(num("craniumWidth", self.cranium_width))
+        self.set_cranium_height(num("craniumHeight", self.cranium_height))
+        self.set_cheekbone_height(num("cheekboneHeight", self.cheekbone_height))
+        self.set_chin_sharpness(num("chinSharpness", self.chin_sharpness))
+        self.set_show_rhythm(flag("showRhythm", self.show_rhythm))
+        self.set_rhythm_strength(num("rhythmStrength", self.rhythm_strength))
         self.set_show_features(flag("showFeatures", self.show_features))
         self.set_show_hair(flag("showHair", self.show_hair))
         self.set_hair_line(num("hairLine", self.hair_line))
@@ -351,6 +453,10 @@ class LoomisHead3D:
         self.set_show_mouth(flag("showMouth", self.show_mouth))
         self.set_show_brows(flag("showBrows", self.show_brows))
         self.set_show_face(flag("showFace", self.show_face))
+        self.set_show_brow_guide(flag("showBrowGuide", self.show_brow_guide))
+        self.set_show_eye_guide(flag("showEyeGuide", self.show_eye_guide))
+        self.set_show_nose_guide(flag("showNoseGuide", self.show_nose_guide))
+        self.set_show_mouth_guide(flag("showMouthGuide", self.show_mouth_guide))
         self.set_arrow(flag("showArrow", self.show_arrow))
         self.set_silhouette(flag("showSilhouette", self.show_silhouette))
         self.set_side_rims(flag("showSideRims", self.show_side_rims))
@@ -360,6 +466,11 @@ class LoomisHead3D:
         color = src.get("strokeColor")
         if isinstance(color, str) and color.startswith("#") and len(color) in (4, 7):
             self.stroke_color = color
+        self.set_light_azimuth(num("lightAzimuth", self.light_azimuth))
+        self.set_light_elevation(num("lightElevation", self.light_elevation))
+        self.set_light_intensity(num("lightIntensity", self.light_intensity))
+        self.set_show_shadow(flag("showShadow", self.show_shadow))
+        self.set_shadow_mode(int(num("shadowMode", self.shadow_mode)))
 
     def _basis_from_nnormal(self, n: Vector3 | Sequence[float]) -> tuple[Vector3, Vector3]:
         nn = n if isinstance(n, Vector3) else Vector3(*n)
@@ -390,9 +501,12 @@ class LoomisHead3D:
 
     def _to_camera(self, pts: Sequence[Vector3]) -> Poly3:
         q = self.q
+        # Craneo eliptico aproximado: escala anisotropa en espacio de cabeza.
+        sx = self.cranium_width
+        sy = self.cranium_height
         out: Poly3 = []
         for p in pts:
-            pv = q * p
+            pv = q * Vector3(p.x * sx, p.y * sy, p.z)
             out.append(pv)
         return out
 
@@ -438,6 +552,111 @@ class LoomisHead3D:
             out.append(p0 * (u * u) + p1 * (2.0 * u * v) + p2 * (v * v))
         return out
 
+    def _catmull_rom(self, points: Sequence[Vector3], steps_per_segment: int = 24) -> Poly3:
+        """Polilinea suave Catmull-Rom que pasa por todos los puntos dados."""
+        if not points:
+            return []
+        if len(points) == 1:
+            return [Vector3(points[0].x, points[0].y, points[0].z)]
+        padded = [points[0], *points, points[-1]]
+        out: Poly3 = []
+        for i in range(len(padded) - 3):
+            p0, p1, p2, p3 = padded[i], padded[i + 1], padded[i + 2], padded[i + 3]
+            for s in range(steps_per_segment):
+                t = s / float(steps_per_segment)
+                t2 = t * t
+                t3 = t2 * t
+                out.append(Vector3(
+                    0.5 * (2.0 * p1.x + (-p0.x + p2.x) * t
+                           + (2.0 * p0.x - 5.0 * p1.x + 4.0 * p2.x - p3.x) * t2
+                           + (-p0.x + 3.0 * p1.x - 3.0 * p2.x + p3.x) * t3),
+                    0.5 * (2.0 * p1.y + (-p0.y + p2.y) * t
+                           + (2.0 * p0.y - 5.0 * p1.y + 4.0 * p2.y - p3.y) * t2
+                           + (-p0.y + 3.0 * p1.y - 3.0 * p2.y + p3.y) * t3),
+                    0.5 * (2.0 * p1.z + (-p0.z + p2.z) * t
+                           + (2.0 * p0.z - 5.0 * p1.z + 4.0 * p2.z - p3.z) * t2
+                           + (-p0.z + 3.0 * p1.z - 3.0 * p2.z + p3.z) * t3),
+                ))
+        last = points[-1]
+        out.append(Vector3(last.x, last.y, last.z))
+        return out
+
+    def _rhythm_curves(
+        self,
+        rc: float,
+        jaw_front_endpoints: dict[float, Vector3] | None = None,
+        chin_midpoint: Vector3 | None = None,
+    ) -> list[Poly3]:
+        """Curvas de ritmo de Reilly sobre la esfera del craneo.
+
+        Perfil central corona -> ceja -> nariz -> boca -> menton, dos arcos
+        laterales corona -> pomulo -> mandibula y el flujo de pelo. La
+        intensidad `rhythm_strength` escala el desplazamiento lateral de los
+        arcos y la curvatura del menton.
+        """
+        strength = max(0.0, min(1.0, self.rhythm_strength))
+
+        def surf(x: float, y: float) -> Vector3:
+            return Vector3(x, y, math.sqrt(max(rc * rc - x * x - y * y, EPS)))
+
+        brow_y = (self.brow_line - 0.5) * 2.0 * rc
+        nose_y = (self.nose_line - 0.5) * 2.0 * rc - self.nose_length * rc
+        mouth_y = (self.mouth_line - 0.5) * 2.0 * rc
+
+        crown = Vector3(0.0, rc, 0.0)
+        brow = surf(0.0, brow_y)
+        nose = surf(0.0, nose_y)
+        mouth = surf(0.0, mouth_y)
+        if chin_midpoint is None:
+            chin_midpoint = Vector3(0.0, -1.22 * rc, rc)
+
+        curves: list[Poly3] = []
+        # Perfil central: pasa por ceja, nariz y boca pegandose a la esfera.
+        profile = self._catmull_rom([crown, brow, nose, mouth], 24)
+        for point in profile:
+            y = max(point.y, mouth_y)
+            point.y = y
+            point.z = math.sqrt(max(rc * rc - point.x * point.x - y * y, EPS))
+        # Del labio al menton la curva sale de la esfera: Bezier encadenada.
+        chin_bow = 0.12 * rc * (0.35 + 0.65 * strength)
+        chin_control = Vector3(
+            0.0,
+            (mouth.y + chin_midpoint.y) * 0.5,
+            (mouth.z + chin_midpoint.z) * 0.5 + chin_bow,
+        )
+        profile.extend(self._quadratic(mouth, chin_control, chin_midpoint, 24)[1:])
+        curves.append(profile)
+
+        # Arcos laterales: corona -> pomulo -> mandibula.
+        if jaw_front_endpoints is None:
+            jaw_front_endpoints = {
+                -1.0: Vector3(-0.55 * rc, -1.49 * rc, rc),
+                1.0: Vector3(0.55 * rc, -1.49 * rc, rc),
+            }
+        for side in (-1.0, 1.0):
+            crown_side = surf(side * (0.06 + 0.14 * strength) * rc, 0.96 * rc)
+            cheek = surf(side * (0.38 + 0.22 * strength) * rc, brow_y - 0.18 * rc)
+            jaw_end = jaw_front_endpoints[side]
+            arc = self._catmull_rom([crown_side, cheek, jaw_end], 24)
+            for point in arc:
+                if point.y >= cheek.y:
+                    point.z = math.sqrt(
+                        max(rc * rc - point.x * point.x - point.y * point.y, EPS)
+                    )
+            curves.append(arc)
+
+        # Flujo de pelo: corona hacia la raya.
+        flow_start_y = (self._effective_hair_line() - 0.5) * 2.0 * rc
+        flow_end_x = self.hair_part_pos * rc
+        flow: Poly3 = []
+        for i in range(33):
+            t = i / 32.0
+            y = rc * (1.0 - t) + flow_start_y * t
+            x = flow_end_x * (t * t) + strength * 0.18 * rc * math.sin(math.pi * t)
+            flow.append(surf(x, y))
+        curves.append(flow)
+        return curves
+
     def build_svg(self, width: float, height: float, dash_back: str | None = "5,6", samples: int = 256) -> str:
         r = self.radius
         rc = r * self.cranium
@@ -463,7 +682,15 @@ class LoomisHead3D:
         # Lineas clasicas de Loomis: ceja, ojos, nariz y boca.
         feature_curves: list[Poly3] = []
         if self.show_features:
-            for frac in (self.brow_line, self.eye_line, self.nose_line, self.mouth_line):
+            guides = (
+                (self.show_brow_guide, self.brow_line),
+                (self.show_eye_guide, self.eye_line),
+                (self.show_nose_guide, self.nose_line),
+                (self.show_mouth_guide, self.mouth_line),
+            )
+            for enabled, frac in guides:
+                if not enabled:
+                    continue
                 y = (frac - 0.5) * 2.0 * rc
                 radius = math.sqrt(max(rc * rc - y * y, EPS))
                 circle = self._circle_on_plane(ny, [0.0, y, 0.0], radius, samples)
@@ -493,15 +720,18 @@ class LoomisHead3D:
         jaw_front_endpoints: dict[float, Vector3] = {}
         age = self.face_age
         jaw_length = max(0.02, 0.8 * (1.22 * r - rim_r) * (0.65 + 0.35 * age) * self.jaw_drop)
-        jaw_angle = math.radians(10.0)
+        jaw_spread_angle = math.radians(10.0)
         front_extension_length = r
         front_down_angle = math.radians(12.0 + 8.0 * age)
         front_inward_angle = math.radians(15.0)
         taper = max(0.2, min(1.0, 0.9 * self.jaw_taper))
+        # jaw_angle: 0 = curva actual, 1 = esquina marcada (control en el vertice).
+        corner = taper + (1.0 - taper) * self.jaw_angle
+        chin = self.chin_sharpness
         for side in (-1.0, 1.0):
             p0 = Vector3(side * d, -rim_r, 0.0)
             p1 = Vector3(
-                (side * d - side * jaw_length * math.tan(jaw_angle)) * self.face_width,
+                (side * d - side * jaw_length * math.tan(jaw_spread_angle)) * self.face_width,
                 -rim_r - jaw_length,
                 0.0,
             )
@@ -510,8 +740,11 @@ class LoomisHead3D:
                 p1.y - front_extension_length * math.tan(front_down_angle),
                 p1.z + front_extension_length,
             )
-            c1 = p0 + (p1 - p0) * taper
-            c2 = p2 - (p2 - p1) * taper
+            if chin > 0.0:
+                # Los dos extremos del menton convergen al centro y bajan.
+                p2 = Vector3(p2.x * (1.0 - chin), p2.y - chin * 0.10 * rc, p2.z)
+            c1 = p0 + (p1 - p0) * corner
+            c2 = p2 - (p2 - p1) * corner
             curve: Poly3 = []
             for i in range(65):
                 t = i / 64.0
@@ -535,8 +768,10 @@ class LoomisHead3D:
 
         # Cheekbone guides con pómulo ajustable.
         cheekbone_curves: list[Poly3] = []
+        cheek_offset_y = (self.cheekbone_height - 0.5) * 0.8 * rim_r
+        cheek_rim_z = math.sqrt(max(rim_r * rim_r - cheek_offset_y * cheek_offset_y, EPS))
         for side in (-1.0, 1.0):
-            cheek_rim_touch = Vector3(side * d, 0.0, rim_r)
+            cheek_rim_touch = Vector3(side * d, cheek_offset_y, cheek_rim_z)
             cheek_end = jaw_front_endpoints[side]
             dx = cheek_end.x - cheek_rim_touch.x
             dy = cheek_end.y - cheek_rim_touch.y
@@ -622,7 +857,7 @@ class LoomisHead3D:
 
         hair_curves: list[Poly3] = []
         if self.show_hair:
-            hy = (self.hair_line - 0.5) * 2.0 * rc
+            hy = (self._effective_hair_line() - 0.5) * 2.0 * rc
             hairline: Poly3 = []
             for i in range(65):
                 t = -1.0 + 2.0 * i / 64.0
@@ -671,12 +906,20 @@ class LoomisHead3D:
                         side_part.append(point)
                     hair_curves.append(side_part)
 
+        # Curvas de ritmo de Reilly (perfil central, arcos laterales y flujo de pelo).
+        rhythm_curves: list[Poly3] = []
+        if self.show_rhythm:
+            rhythm_curves = self._rhythm_curves(rc, jaw_front_endpoints, chin_midpoint)
+
         groups_front: dict[str, list[str]] = {key: [] for key in ZONE_COLORS if key != "arrow"}
         groups_back: dict[str, list[str]] = {key: [] for key in ZONE_COLORS if key != "arrow"}
 
         for c in curves:
             self._emit_segments(clip_to_side_band(c, d), width, height,
                                 groups_front["cranium"], groups_back["cranium"])
+        for c in rhythm_curves:
+            self._emit_segments(clip_to_side_band(c, d), width, height,
+                                groups_front["rhythm"], groups_back["rhythm"])
         for c in feature_curves:
             self._emit_segments(clip_to_side_band(c, d), width, height,
                                 groups_front["features"], groups_back["features"])
@@ -736,7 +979,7 @@ class LoomisHead3D:
                 )
 
         dash_attr = f' stroke-dasharray="{dash_back}"' if dash_back else ""
-        order = ("cranium", "jaw", "cheek", "features", "hair", "side")
+        order = ("cranium", "jaw", "cheek", "rhythm", "features", "hair", "side")
         svg: list[str] = ['<svg xmlns="http://www.w3.org/2000/svg">']
         if self.use_zone_colors:
             svg.append('<g title="head" fill="none">')
@@ -775,5 +1018,13 @@ class LoomisHead3D:
             if self.show_arrow and arrow_d:
                 svg.append(f'</g><g fill="none" title="arrow" stroke="{self.stroke_color}">')
                 svg.append(f'<path d="{arrow_d}" stroke-width="{self.front_line_stroke + 1}"/>')
+        # Sombra direccional opcional (lo aporta loomis_head/light.py).
+        try:
+            from .light import shadow_svg
+            shadow = shadow_svg(self, width, height)
+        except Exception:
+            shadow = ""
+        if shadow:
+            svg.append(shadow)
         svg.append("</g></svg>")
         return "".join(svg)

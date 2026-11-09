@@ -29,3 +29,20 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
 - Fixed Quick Access Manager compatibility: the `actions` layout in the `.ui` shadowed
   `QWidget.actions()` and broke QAM's action discovery for every quick action.
 - Preview: the head is scaled and centred so the chin is no longer clipped.
+
+## 0.6.0 — 2026-11-09
+
+- **Parametric proportions**: new `forehead_height`, `jaw_angle`, `cranium_width` and
+  `cranium_height` (head width/height), `cheekbone_height` and `chin_sharpness`
+  parameters, with setters, clamps and JSON round-trip. The five head presets were
+  updated to carry the new fields.
+- **Independent guide lines**: brow, eye, nose and mouth lines can be shown or hidden
+  separately. The existing mouth checkbox is now labelled "Mouth curve".
+- **Reilly rhythm curves**: an optional `rhythm` zone draws the Reilly flow lines
+  (crown → brow → nose → mouth → chin plus the lateral arches) with adjustable strength.
+- **Directional light**: azimuth, elevation and intensity, a terminator (or cel) shadow
+  clipped to the lateral band, and a new **Light** tab to drive it.
+- JSON compatibility with 0.5.1: missing keys fall back to the current defaults;
+  `jaw_angle` now defaults to `0.0`.
+- Tests: 31 generator tests plus 25 light tests, and an offscreen docker check with six
+  tabs.
