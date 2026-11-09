@@ -132,8 +132,8 @@ class HeadPreviewWidget(QWidget):
 
         preview = copy.deepcopy(self.model)
         preview.set_position_x(width * 0.5)
-        preview.set_position_y(height * 0.5)
-        preview.set_scale(1.05 * self._zoom)
+        preview.set_position_y(height * 0.45)
+        preview.set_scale(0.95 * self._zoom)
         preview.set_front_line_stroke(2.0)
         preview.set_back_line_stroke(1.4)
         preview.set_quaternion(self._q)

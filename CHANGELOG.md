@@ -19,3 +19,13 @@ First public release of the imboolean fork.
 - Credits and SPDX headers; GPL-3.0-only.
 
 Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator by lm0ss.
+
+## 0.5.1 — 2026-11-09
+
+- Docker UI: head, 3D preview, view selector, library and action buttons stay fixed;
+  Settings, Move, Guides, Features and Hair now live in scrollable tabs.
+- Fixed the feature checkboxes: after switching heads they wrote to the previous model,
+  so hiding mouth/ears/eyes appeared to do nothing.
+- Fixed Quick Access Manager compatibility: the `actions` layout in the `.ui` shadowed
+  `QWidget.actions()` and broke QAM's action discovery for every quick action.
+- Preview: the head is scaled and centred so the chin is no longer clipped.

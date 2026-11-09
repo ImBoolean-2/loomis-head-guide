@@ -56,7 +56,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.5.0.zip`.
+1. Download `release/loomis-head-guide-0.5.1.zip`.
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.

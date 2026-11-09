@@ -17,16 +17,21 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
+    QSizePolicy,
     QSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from . import i18n
-from .features_dialog import FeaturePanel
+from .features_dialog import FeaturePanel, HairPanel
 from .preview import HeadPreviewWidget
 from .i18n import t
 from .linalg import (
@@ -95,16 +100,10 @@ class LoomisProportionsDocker(DockWidget):
         self._load_characters()
         self._refresh_oc_combo()
         self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
+        self.hair_panel = HairPanel(self.loomis_head, self.schedule_update, self)
         self.transform_group = self._build_transform_panel()
-        layout = self._scroll_layout()
-        if layout is not None:
-            index = layout.indexOf(self.ui.groupGuides)
-            self.feature_panel_index = index + 1 if index >= 0 else layout.count()
-            layout.insertWidget(self.feature_panel_index, self.feature_panel)
-            layout.insertWidget(index if index >= 0 else 0, self.transform_group)
         self.language_group = self._build_language_panel()
-        if layout is not None:
-            layout.insertWidget(max(0, layout.count() - 1), self.language_group)
+        self._build_dashboard()
         self.ui.featuresButton.hide()
         self._log_init("init:ok")
 
@@ -647,6 +646,14 @@ class LoomisProportionsDocker(DockWidget):
             slider.setRange(-180, 180)
         self.posXSlider.valueChanged.connect(self._on_pos_x_slider)
         self.posYSlider.valueChanged.connect(self._on_pos_y_slider)
+        for signal, slot in (
+            (self.ui.positionXSpinBox.valueChanged, self._on_pos_x_spin),
+            (self.ui.positionYSpinBox.valueChanged, self._on_pos_y_spin),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
         self.ui.positionXSpinBox.valueChanged.connect(self._on_pos_x_spin)
         self.ui.positionYSpinBox.valueChanged.connect(self._on_pos_y_spin)
         for slider in (self.rotXSlider, self.rotYSlider, self.rotZSlider):
@@ -778,6 +785,16 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.guideDeleteButton.setToolTip(t("button.delete_head"))
         self.ui.creditLabel.setText(t("credit.text"))
         self.trackball.setToolTip(t("preview.hint"))
+        if hasattr(self, "tabs"):
+            for index, key in enumerate((
+                "tabs.settings",
+                "tabs.transform",
+                "tabs.guides",
+                "tabs.features",
+                "tabs.hair",
+            )):
+                if index < self.tabs.count():
+                    self.tabs.setTabText(index, t(key))
         if hasattr(self, "language_group"):
             self.language_group.setTitle(t("language.section"))
             self.languageLabel.setText(t("language.label"))
@@ -810,6 +827,7 @@ class LoomisProportionsDocker(DockWidget):
         self.trackball = HeadPreviewWidget(self.loomis_head, host)
         lay = QVBoxLayout(host)
         lay.setContentsMargins(0, 0, 0, 0)
+        self.trackball.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lay.addWidget(self.trackball)
 
         self.trackball.orientation_changed.connect(self._on_preview_rotation)
@@ -837,6 +855,99 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.resetSettingsButton.clicked.connect(self.reset_settings)
         self.ui.saveButton.clicked.connect(self.save_head)
         self._apply_language()
+
+    def _build_dashboard(self) -> None:
+        """Deja fijos cabeza, preview, vista y biblioteca; el resto en pestanas."""
+        outer = self.ui.layout()
+        scroll = self.ui.scrollArea
+        if outer is not None:
+            outer.removeWidget(scroll)
+
+        fixed = QWidget()
+        fixed_layout = QVBoxLayout(fixed)
+        fixed_layout.setContentsMargins(10, 10, 10, 6)
+        fixed_layout.setSpacing(6)
+
+        head_row = QHBoxLayout()
+        head_row.addWidget(self.ui.labelGuide)
+        head_row.addWidget(self.ui.guideCombo, 1)
+        head_row.addWidget(self.ui.guideNewButton)
+        head_row.addWidget(self.ui.guideDeleteButton)
+        fixed_layout.addLayout(head_row)
+
+        preview_row = QHBoxLayout()
+        axis = QVBoxLayout()
+        axis.addWidget(self.ui.labelRot)
+        axis.addWidget(self.ui.rotXSpin)
+        axis.addWidget(self.ui.rotYSpin)
+        axis.addWidget(self.ui.rotZSpin)
+        axis.addStretch(1)
+        preview_row.addLayout(axis)
+        self.ui.trackballHost.setFixedHeight(240)
+        preview_row.addWidget(self.ui.trackballHost, 1)
+        fixed_layout.addLayout(preview_row, 1)
+
+        view_row = QHBoxLayout()
+        view_row.addWidget(self.ui.labelView)
+        view_row.addWidget(self.ui.viewCombo, 1)
+        fixed_layout.addLayout(view_row)
+
+        fixed_layout.addWidget(self.ui.presetGroup)
+
+        actions_row = QGridLayout()
+        actions_row.addWidget(self.ui.resetButton, 0, 0)
+        actions_row.addWidget(self.ui.resetPositionButton, 0, 1)
+        actions_row.addWidget(self.ui.resetSettingsButton, 1, 0)
+        actions_row.addWidget(self.ui.saveButton, 1, 1)
+        fixed_layout.addLayout(actions_row)
+
+        if outer is not None:
+            outer.addWidget(fixed, 0)
+
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setUsesScrollButtons(True)
+        if outer is not None:
+            outer.addWidget(self.tabs, 1)
+
+        settings_layout = scroll.widget().layout() if scroll.widget() is not None else None
+        if settings_layout is not None:
+            if hasattr(self.ui, "separatorTop"):
+                settings_layout.removeWidget(self.ui.separatorTop)
+                self.ui.separatorTop.deleteLater()
+            if self.language_group is not None:
+                index = settings_layout.indexOf(self.ui.creditLabel)
+                settings_layout.insertWidget(
+                    index if index >= 0 else settings_layout.count(),
+                    self.language_group,
+                )
+        self.tabs.addTab(scroll, t("tabs.settings"))
+
+        self.transform_page, self.transform_page_layout = self._page(self.transform_group)
+        self.tabs.addTab(self.transform_page, t("tabs.transform"))
+
+        self.guides_page, self.guides_page_layout = self._page(self.ui.groupGuides)
+        self.tabs.addTab(self.guides_page, t("tabs.guides"))
+
+        self.feature_page, self.feature_page_layout = self._page(self.feature_panel)
+        self.tabs.addTab(self.feature_page, t("tabs.features"))
+
+        self.hair_page, self.hair_page_layout = self._page(self.hair_panel)
+        self.tabs.addTab(self.hair_page, t("tabs.hair"))
+
+    def _page(self, widget: QWidget):
+        """Envuelve un panel en una pestana con scroll propio."""
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(widget)
+        layout.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        return scroll, layout
 
     def schedule_update(self):
         self.trackball.update()
@@ -1057,10 +1168,6 @@ class LoomisProportionsDocker(DockWidget):
         except OSError:
             pass
 
-    def _scroll_layout(self):
-        content = self.ui.scrollArea.widget()
-        return content.layout() if content is not None else None
-
     def _build_language_panel(self) -> QGroupBox:
         group = QGroupBox(t("language.section"))
         form = QFormLayout(group)
@@ -1087,21 +1194,29 @@ class LoomisProportionsDocker(DockWidget):
         self._reload_localized_panels()
 
     def _reload_localized_panels(self) -> None:
-        layout = self._scroll_layout()
-        if layout is None:
-            return
-        for widget in (self.feature_panel, self.transform_group):
-            if widget is not None:
-                layout.removeWidget(widget)
-                widget.deleteLater()
-        index = layout.indexOf(self.ui.groupGuides)
-        self.transform_group = self._build_transform_panel()
-        layout.insertWidget(index if index >= 0 else 0, self.transform_group)
-        index = layout.indexOf(self.ui.groupGuides)
-        self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
-        layout.insertWidget(index + 1 if index >= 0 else layout.count(), self.feature_panel)
+        replacements = (
+            ("feature_panel", "feature_page_layout",
+             lambda: FeaturePanel(self.loomis_head, self.schedule_update, self)),
+            ("hair_panel", "hair_page_layout",
+             lambda: HairPanel(self.loomis_head, self.schedule_update, self)),
+            ("transform_group", "transform_page_layout", self._build_transform_panel),
+        )
+        for attr, layout_attr, builder in replacements:
+            layout = getattr(self, layout_attr, None)
+            if layout is None:
+                continue
+            old = getattr(self, attr, None)
+            if old is not None:
+                layout.removeWidget(old)
+                old.deleteLater()
+            new = builder()
+            layout.insertWidget(0, new)
+            setattr(self, attr, new)
         self.ui.featuresButton.hide()
-        self.feature_panel.set_model(self.loomis_head)
+        if self.feature_panel is not None:
+            self.feature_panel.set_model(self.loomis_head)
+        if self.hair_panel is not None:
+            self.hair_panel.set_model(self.loomis_head)
         self._sync_ui_from_model()
         self._sync_euler_from_model()
 

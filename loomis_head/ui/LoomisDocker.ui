@@ -560,7 +560,7 @@
                         <number>0</number>
                     </property>
                     <item>
-                        <layout class="QHBoxLayout" name="actions">
+                        <layout class="QHBoxLayout" name="actionsLayout">
                             <property name="spacing">
                                 <number>6</number>
                             </property>

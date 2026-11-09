@@ -125,5 +125,10 @@
   "language.section": "Idioma",
   "language.label": "Idioma",
   "language.auto": "Auto (sistema)",
-  "status.no_grimorio": "Grimorio no detectado — modo independiente"
+  "status.no_grimorio": "Grimorio no detectado — modo independiente",
+  "tabs.settings": "Ajustes",
+  "tabs.transform": "Mover",
+  "tabs.guides": "Guías",
+  "tabs.features": "Rasgos",
+  "tabs.hair": "Pelo"
 }

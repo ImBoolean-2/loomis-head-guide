@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Panel de rasgos, caricatura y pelo del Loomis Head Guide.
+"""Paneles de rasgos, caricatura y pelo del Loomis Head Guide.
 
-Se incrusta en el docker (no abre una ventana aparte) y trabaja sobre el modelo
-activo. El contenedor con scroll es el panel principal.
+Se separan en dos widgets (rasgos y pelo) para que el docker pueda mostrarlos
+en pestanas independientes. Ambos trabajan sobre el modelo activo y comparten
+el callback de redibujo.
 """
 from __future__ import annotations
 
@@ -42,14 +43,53 @@ HEAD_TYPES = (
 )
 
 
-class FeaturePanel(QWidget):
+class _ModelPanel(QWidget):
+    """Base para paneles que cambian de modelo (varias cabezas/documentos)."""
+
     def __init__(self, model, on_change, parent=None):
         super().__init__(parent)
         self.model = model
         self.on_change = on_change
         self._syncing = False
         self._sliders: list[tuple[QSlider, object]] = []
-        self._flags: list[tuple[QCheckBox, object]] = []
+        self._form: QFormLayout | None = None
+
+    def set_model(self, model) -> None:
+        self.model = model
+        self.sync_from_model()
+
+    def _section(self, text: str) -> None:
+        if self._form is not None:
+            self._form.addRow(QLabel(f"<b>{text}</b>"))
+
+    def _slider(self, label, low, high, getter, setter) -> None:
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(low, high)
+        slider.setValue(int(round(getter())))
+        slider.valueChanged.connect(lambda value: self._apply(setter, value))
+        if self._form is not None:
+            self._form.addRow(label, slider)
+        self._sliders.append((slider, getter))
+
+    def _apply(self, setter, value) -> None:
+        if self._syncing:
+            return
+        setter(value)
+        self.on_change()
+
+    def sync_from_model(self) -> None:
+        self._syncing = True
+        for slider, getter in self._sliders:
+            slider.setValue(int(round(getter())))
+        self._syncing = False
+
+
+class FeaturePanel(_ModelPanel):
+    """Tipo de cabeza, caricatura, lineas de Loomis y rasgos dibujados."""
+
+    def __init__(self, model, on_change, parent=None):
+        super().__init__(model, on_change, parent)
+        self._flags: list[tuple[QCheckBox, str]] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -93,84 +133,35 @@ class FeaturePanel(QWidget):
         flags = QWidget()
         flags_layout = QHBoxLayout(flags)
         flags_layout.setContentsMargins(0, 0, 0, 0)
-        for text, getter, setter in (
-            (t("features.eyes"), lambda: self.model.show_eyes, self.model.set_show_eyes),
-            (t("features.brows"), lambda: self.model.show_brows, self.model.set_show_brows),
-            (t("features.nose"), lambda: self.model.show_nose, self.model.set_show_nose),
-            (t("features.ears"), lambda: self.model.show_ears, self.model.set_show_ears),
-            (t("features.mouth"), lambda: self.model.show_mouth, self.model.set_show_mouth),
+        for text, attr in (
+            (t("features.eyes"), "show_eyes"),
+            (t("features.brows"), "show_brows"),
+            (t("features.nose"), "show_nose"),
+            (t("features.ears"), "show_ears"),
+            (t("features.mouth"), "show_mouth"),
         ):
             checkbox = QCheckBox(text)
-            checkbox.setChecked(bool(getter()))
-            checkbox.toggled.connect(lambda checked, s=setter: self._apply(s, checked))
+            checkbox.setChecked(bool(getattr(self.model, attr)))
+            # El setter se resuelve en tiempo de llamada: al cambiar de cabeza
+            # (set_model) los checkboxes deben escribir en el modelo activo,
+            # no en el que existia al construir el panel.
+            checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
             flags_layout.addWidget(checkbox)
-            self._flags.append((checkbox, getter))
+            self._flags.append((checkbox, attr))
         self._form.addRow(t("features.show"), flags)
 
-        self._section(t("hair.section"))
-        self.hair_master = QCheckBox(t("hair.show"))
-        self.hair_master.toggled.connect(self._set_hair)
-        self._form.addRow(self.hair_master)
-        self._slider(t("hair.line"), 55, 85, lambda: self.model.hair_line * 100, lambda v: self.model.set_hair_line(v / 100))
-        self._slider(t("hair.arch"), 0, 20, lambda: self.model.hair_arch * 100, lambda v: self.model.set_hair_arch(v / 100))
-        self._slider(t("hair.tilt"), -20, 20, lambda: self.model.hair_tilt * 100, lambda v: self.model.set_hair_tilt(v / 100))
-        self._slider(t("hair.part_pos"), -100, 100, lambda: self.model.hair_part_pos * 100, lambda v: self.model.set_hair_part_pos(v / 100))
-        self.hair_part_combo = QComboBox()
-        for key in ("hair.straight", "hair.zigzag", "hair.spiky"):
-            self.hair_part_combo.addItem(t(key))
-        self.hair_part_combo.activated[int].connect(self._set_hair_part)
-        self._form.addRow(t("hair.part"), self.hair_part_combo)
-        self.hair_texture_combo = QComboBox()
-        for key in ("hair.smooth", "hair.wavy", "hair.texture_spiky", "hair.curly"):
-            self.hair_texture_combo.addItem(t(key))
-        self.hair_texture_combo.activated[int].connect(self._set_hair_texture)
-        self._form.addRow(t("hair.texture"), self.hair_texture_combo)
-
         self.sync_from_model()
 
-    def set_model(self, model) -> None:
-        self.model = model
-        self.sync_from_model()
-
-    def _section(self, text: str) -> None:
-        self._form.addRow(QLabel(f"<b>{text}</b>"))
-
-    def _slider(self, label, low, high, getter, setter) -> None:
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(low, high)
-        slider.setValue(int(round(getter())))
-        slider.valueChanged.connect(lambda value: self._apply(setter, value))
-        self._form.addRow(label, slider)
-        self._sliders.append((slider, getter))
-
-    def _apply(self, setter, value) -> None:
+    def _apply_flag(self, attr: str, checked: bool) -> None:
         if self._syncing:
             return
-        setter(value)
+        getattr(self.model, "set_" + attr)(checked)
         self.on_change()
 
     def _set_master(self, checked: bool) -> None:
         if self._syncing:
             return
         self.model.set_show_features(checked)
-        self.on_change()
-
-    def _set_hair(self, checked: bool) -> None:
-        if self._syncing:
-            return
-        self.model.set_show_hair(checked)
-        self.on_change()
-
-    def _set_hair_part(self, index: int) -> None:
-        if self._syncing:
-            return
-        self.model.set_hair_part(index)
-        self.on_change()
-
-    def _set_hair_texture(self, index: int) -> None:
-        if self._syncing:
-            return
-        self.model.set_hair_texture(index)
         self.on_change()
 
     def _apply_type(self, index: int) -> None:
@@ -193,11 +184,76 @@ class FeaturePanel(QWidget):
     def sync_from_model(self) -> None:
         self._syncing = True
         self.master.setChecked(bool(self.model.show_features))
-        self.hair_master.setChecked(bool(self.model.show_hair))
-        self.hair_part_combo.setCurrentIndex(int(self.model.hair_part))
-        self.hair_texture_combo.setCurrentIndex(int(self.model.hair_texture))
+        self.type_combo.setCurrentIndex(self._type_index())
         for slider, getter in self._sliders:
             slider.setValue(int(round(getter())))
-        for checkbox, getter in self._flags:
-            checkbox.setChecked(bool(getter()))
+        for checkbox, attr in self._flags:
+            checkbox.setChecked(bool(getattr(self.model, attr)))
+        self._syncing = False
+
+    def _type_index(self) -> int:
+        # No hay un tipo "activo" guardado: se mantiene el que el usuario eligio.
+        return self.type_combo.currentIndex() if self.type_combo.count() else 0
+
+
+class HairPanel(_ModelPanel):
+    """Pelo parametrico: linea, arco, inclinacion, raya, patron y textura."""
+
+    def __init__(self, model, on_change, parent=None):
+        super().__init__(model, on_change, parent)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.master = QCheckBox(t("hair.show"))
+        self.master.toggled.connect(self._set_master)
+        outer.addWidget(self.master)
+
+        self._form = QFormLayout()
+        outer.addLayout(self._form)
+
+        self._section(t("hair.section"))
+        self._slider(t("hair.line"), 55, 85, lambda: self.model.hair_line * 100, lambda v: self.model.set_hair_line(v / 100))
+        self._slider(t("hair.arch"), 0, 20, lambda: self.model.hair_arch * 100, lambda v: self.model.set_hair_arch(v / 100))
+        self._slider(t("hair.tilt"), -20, 20, lambda: self.model.hair_tilt * 100, lambda v: self.model.set_hair_tilt(v / 100))
+        self._slider(t("hair.part_pos"), -100, 100, lambda: self.model.hair_part_pos * 100, lambda v: self.model.set_hair_part_pos(v / 100))
+
+        self.part_combo = QComboBox()
+        for key in ("hair.straight", "hair.zigzag", "hair.spiky"):
+            self.part_combo.addItem(t(key))
+        self.part_combo.activated[int].connect(self._set_part)
+        self._form.addRow(t("hair.part"), self.part_combo)
+
+        self.texture_combo = QComboBox()
+        for key in ("hair.smooth", "hair.wavy", "hair.texture_spiky", "hair.curly"):
+            self.texture_combo.addItem(t(key))
+        self.texture_combo.activated[int].connect(self._set_texture)
+        self._form.addRow(t("hair.texture"), self.texture_combo)
+
+        self.sync_from_model()
+
+    def _set_master(self, checked: bool) -> None:
+        if self._syncing:
+            return
+        self.model.set_show_hair(checked)
+        self.on_change()
+
+    def _set_part(self, index: int) -> None:
+        if self._syncing:
+            return
+        self.model.set_hair_part(index)
+        self.on_change()
+
+    def _set_texture(self, index: int) -> None:
+        if self._syncing:
+            return
+        self.model.set_hair_texture(index)
+        self.on_change()
+
+    def sync_from_model(self) -> None:
+        self._syncing = True
+        self.master.setChecked(bool(self.model.show_hair))
+        self.part_combo.setCurrentIndex(int(self.model.hair_part))
+        self.texture_combo.setCurrentIndex(int(self.model.hair_texture))
+        for slider, getter in self._sliders:
+            slider.setValue(int(round(getter())))
         self._syncing = False

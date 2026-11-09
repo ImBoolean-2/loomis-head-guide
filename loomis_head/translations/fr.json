@@ -125,5 +125,10 @@
   "language.section": "Langue",
   "language.label": "Langue",
   "language.auto": "Auto (système)",
-  "status.no_grimorio": "Grimoire non détecté — mode autonome"
+  "status.no_grimorio": "Grimoire non détecté — mode autonome",
+  "tabs.settings": "Réglages",
+  "tabs.transform": "Déplacer",
+  "tabs.guides": "Repères",
+  "tabs.features": "Traits",
+  "tabs.hair": "Cheveux"
 }

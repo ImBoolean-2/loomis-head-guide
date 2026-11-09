@@ -125,5 +125,10 @@
   "language.section": "Language",
   "language.label": "Language",
   "language.auto": "Auto (system)",
-  "status.no_grimorio": "Grimoire not detected — standalone mode"
+  "status.no_grimorio": "Grimoire not detected — standalone mode",
+  "tabs.settings": "Settings",
+  "tabs.transform": "Move",
+  "tabs.guides": "Guides",
+  "tabs.features": "Features",
+  "tabs.hair": "Hair"
 }
