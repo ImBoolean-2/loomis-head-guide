@@ -8,6 +8,12 @@ quaternion, trazos, toggles y ``to_dict``/``from_dict``) para que el panel y la
 capa vectorial funcionen sin cambios. Lo propio de Asaro es la malla de planos:
 frente, ceja, cuenca, nariz, pomulo, mandibula y menton, dibujada solo con
 aristas (sin relleno).
+
+La malla esta pensada para leerse en los tres cuartos y, sobre todo, de perfil:
+a 90 grados la proyeccion solo conserva (z, y), asi que la silueta la definen
+las dos curvas descriptas en ``_HALF_VERTICES`` (cara y craneo). Los vertices
+interiores solo agregan pliegues; si se mueve uno de la linea central de la
+cara o de la nuca, el perfil cambia y hay que volver a mirarlo.
 """
 
 import math
@@ -28,54 +34,64 @@ _CREASE_DEG = 25.0
 
 # Vertices de la mitad derecha (x >= 0). Los de x == 0 son la linea central y
 # se comparten con la mitad izquierda; el resto se refleja.
+#
+# Ejes: x lateral (+ derecha), y arriba, z hacia camara (+ delante). El perfil
+# a 90 grados solo ve (z, y): la silueta de la cara es, por tanto, la curva
+# frente -> ceja -> nasion -> dorso -> punta -> filtro -> labios -> menton, y
+# la de atras la curva coronilla -> occipucio -> nuca. Esas dos curvas mandan
+# la lectura; el resto de vertices solo matiza los planos interiores.
 _HALF_VERTICES: dict[str, tuple[float, float, float]] = {
-    "A1": (0.00, 0.84, 0.50),   # frente, arriba en el centro
-    "A2": (0.36, 0.80, 0.58),   # frente, medio
-    "A3": (0.60, 0.62, 0.40),   # frente, lateral
-    "B1": (0.00, 0.44, 0.90),   # ceja, centro
-    "B2": (0.28, 0.42, 0.90),   # ceja, medio
-    "B3": (0.54, 0.38, 0.72),   # ceja, lateral
-    "C1": (0.14, 0.28, 0.84),   # cuenca, interior
-    "C2": (0.46, 0.24, 0.70),   # cuenca, exterior
-    "C3": (0.30, 0.12, 0.78),   # cuenca, fondo
-    "D1": (0.00, 0.24, 1.00),   # nariz, puente
-    "D2": (0.13, 0.18, 0.98),   # nariz, lateral alto
-    "D3": (0.18, -0.04, 1.02),  # nariz, lateral bajo
-    "D4": (0.24, -0.14, 0.90),  # nariz, ala
-    "D5": (0.00, -0.04, 1.20),  # nariz, punta
-    "D6": (0.00, -0.16, 0.98),  # nariz, base
-    "E1": (0.54, 0.04, 0.62),   # pomulo
-    "E2": (0.38, -0.08, 0.84),  # mejilla, frontal
-    "E3": (0.40, -0.30, 0.66),  # mejilla, baja
-    "E4": (0.72, 0.18, 0.26),   # arco cigomatico
-    "F1": (0.24, -0.40, 0.86),  # boca, comisura
-    "F2": (0.00, -0.28, 0.92),  # filtro
-    "F3": (0.00, -0.38, 0.90),  # labio superior
-    "F4": (0.13, -0.52, 0.84),  # labio inferior, lateral
-    "F5": (0.00, -0.50, 0.88),  # labio inferior, centro
-    "G1": (0.20, -0.80, 0.66),  # menton, lateral
-    "G2": (0.00, -0.68, 0.82),  # menton, frontal
-    "G3": (0.00, -1.00, 0.38),  # menton, bajo
-    "G4": (0.28, -0.90, 0.22),  # mandibula, bajo
-    "H1": (0.46, -0.46, 0.34),  # mandibula, esquina
-    "H2": (0.40, -0.66, 0.44),  # mandibula, lateral
-    "H3": (0.44, -0.50, 0.00),  # mandibula, atras
-    "H4": (0.00, -1.04, 0.00),  # bajo el menton
-    "I1": (0.68, 0.50, 0.20),   # sien
-    "I2": (0.58, 0.70, -0.18),  # lateral, arriba
-    "I3": (0.70, 0.28, -0.16),  # oreja, arriba
-    "I4": (0.68, -0.12, -0.16), # oreja, abajo
-    "I5": (0.74, 0.14, -0.22),  # lateral, medio
-    "I6": (0.50, 0.26, -0.62),  # lateral, atras
-    "I7": (0.36, 0.10, -0.68),  # nuca, medio
-    "I8": (0.24, -0.80, -0.36), # cuello, lateral
-    "I9": (0.00, 0.86, -0.28),  # coronilla, atras
-    "I10": (0.00, 0.12, -0.74), # nuca, centro
-    "I11": (0.00, -0.60, -0.34), # nuca, baja
+    "A1": (0.00, 0.90, 0.30),   # frente, coronilla delantera
+    "A2": (0.36, 0.84, 0.44),   # frente, medio
+    "A3": (0.60, 0.62, 0.24),   # frente, lateral (sien)
+    "B1": (0.00, 0.44, 0.62),   # ceja, centro (glabela, sobresale)
+    "B2": (0.26, 0.42, 0.60),   # ceja, medio
+    "B3": (0.52, 0.36, 0.46),   # ceja, lateral (borde orbitario)
+    "C1": (0.10, 0.30, 0.42),   # cuenca, interior (hundida)
+    "C2": (0.44, 0.24, 0.36),   # cuenca, exterior (hundida)
+    "C3": (0.27, 0.14, 0.38),   # cuenca, fondo (hundida)
+    "D1": (0.00, 0.36, 0.54),   # nariz, nasion (muesca bajo la ceja)
+    "D2": (0.09, 0.26, 0.66),   # nariz, dorso alto
+    "D3": (0.12, 0.06, 0.78),   # nariz, dorso bajo
+    "D4": (0.20, -0.16, 0.74),  # nariz, ala
+    "D5": (0.00, -0.04, 0.92),  # nariz, punta
+    "D6": (0.00, -0.22, 0.72),  # nariz, base (subnasal)
+    "E1": (0.50, 0.06, 0.36),   # pomulo (cuerpo)
+    "E2": (0.33, -0.06, 0.52),  # mejilla, frontal
+    "E3": (0.37, -0.30, 0.38),  # mejilla, baja (hueco sobre la mandibula)
+    "E4": (0.64, 0.22, 0.06),   # arco cigomatico (escalon hacia la oreja)
+    "F1": (0.20, -0.36, 0.50),  # boca, comisura
+    "F2": (0.00, -0.22, 0.60),  # filtro
+    "F3": (0.00, -0.32, 0.56),  # labio superior
+    "F4": (0.11, -0.46, 0.50),  # labio inferior, lateral
+    "F5": (0.00, -0.44, 0.53),  # labio inferior, centro
+    "G1": (0.16, -0.76, 0.44),  # menton, lateral
+    "G2": (0.00, -0.70, 0.60),  # menton, frontal (sobresale del labio)
+    "G3": (0.00, -0.94, 0.30),  # menton, bajo
+    "G4": (0.24, -0.84, 0.02),  # mandibula, bajo
+    "G5": (0.00, -0.55, 0.46),  # surco mentoniano (muesca bajo el labio)
+    "H1": (0.52, -0.54, -0.06), # mandibula, angulo (gonion)
+    "H2": (0.39, -0.70, 0.10),  # mandibula, lateral
+    "H3": (0.39, -0.48, -0.28), # mandibula, detras del angulo
+    "M1": (0.62, -0.18, 0.06),  # lateral del maxilar (masseter)
+    "I1": (0.64, 0.50, 0.02),   # sien
+    "I2": (0.57, 0.66, -0.44),  # parietal, lateral
+    "I3": (0.60, 0.34, -0.12),  # oreja, arriba
+    "I4": (0.58, -0.20, -0.14), # oreja, abajo
+    "I5": (0.70, 0.08, -0.38),  # oreja, helix (borde posterior)
+    "I6": (0.46, 0.26, -0.60),  # occipucio, lateral
+    "I7": (0.31, 0.08, -0.68),  # nuca, media
+    "I8": (0.18, -0.78, -0.20), # cuello, lateral
+    "I9": (0.00, 0.80, -0.36),  # coronilla, atras
+    "I10": (0.00, 0.06, -0.72), # nuca, centro (punto mas atras)
+    "I11": (0.00, -0.50, -0.34), # nuca, baja
+    "I12": (0.00, -0.20, -0.62), # nuca, media (redondea el occipucio)
+    "I13": (0.00, 0.52, -0.56), # occipucio, alto (redondea la coronilla)
 }
 
-# (nivel de detalle minimo, vertices en orden). Nivel 0 = planos grandes,
-# 1 = construccion estandar, 2 = planos finos (sien, oreja, cuello).
+# (nivel de detalle minimo, vertices en orden). Nivel 0 = planos grandes (con la
+# nariz ya unida a la mejilla), 1 = construccion estandar (oreja, occipucio,
+# cuenca, mandibula), 2 = planos finos (sien, coronilla).
 _HALF_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
     (0, ("A1", "A2", "B2", "B1")),
     (0, ("A2", "A3", "B3", "B2")),
@@ -88,24 +104,27 @@ _HALF_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
     (0, ("F2", "E2", "F1", "F3")),
     (0, ("F3", "F1", "F4", "F5")),
     (0, ("E3", "H1", "H2", "G1")),
-    (0, ("F4", "G1", "G2", "F5")),
+    (0, ("F4", "G1", "G2", "G5")),
+    (0, ("F5", "F4", "G5")),
+    (0, ("C3", "E2", "D3")),
+    (0, ("D3", "D4", "E2")),
+    (0, ("D6", "D4", "E2", "F2")),
     (1, ("C1", "C2", "C3")),
     (1, ("C1", "C3", "D2", "D1")),
     (1, ("G1", "G4", "G3", "G2")),
     (1, ("H1", "H3", "H2")),
     (1, ("H2", "H3", "I8", "G4")),
     (1, ("I1", "I2", "I3", "E4")),
-    (1, ("E4", "I5", "H1")),
+    (1, ("E4", "I5", "M1", "H1")),
     (1, ("I5", "I4", "I8", "H3")),
-    (1, ("I2", "I9", "I6")),
+    (1, ("I2", "I9", "I13", "I6")),
+    (1, ("I3", "I4", "I5")),
     (1, ("I6", "I7", "I10")),
-    (1, ("I7", "I10", "I11")),
+    (1, ("I7", "I10", "I12", "I11")),
     (1, ("I7", "I11", "I8")),
     (1, ("A1", "A3", "I9")),
     (1, ("A3", "I2", "I9")),
     (2, ("A3", "I1", "B3")),
-    (2, ("C3", "E2", "D3")),
-    (2, ("I3", "I4", "I5")),
     (2, ("I9", "I6", "I7")),
     (2, ("I9", "I7", "I10")),
 )
