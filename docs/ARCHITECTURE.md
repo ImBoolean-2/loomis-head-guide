@@ -34,12 +34,21 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 
 ## Models and the model switch
 
-- `AsaroHead` (`asaro.py`) draws a ~40-face low-poly head as face contours: orthographic
+- `AsaroHead` (`asaro.py`) draws a low-poly head as face contours: orthographic
   projection with the same scale as the generator (`min(width, height) * 0.3 * scale`),
   painter's algorithm by mean z, front edges with `front_line_stroke`, back edges with
   `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`, `detail`
   (0..2). It also carries the Loomis attributes and setters as defaults/no-ops so
   `_sync_ui_from_model` does not break; the UI hides them for Asaro.
+- **Profile mesh (0.7.1)**: at 90° the projection keeps only (z, y), so the silhouette is
+  two curves — face (forehead → brow → nasion → dorsum → tip → philtrum → lips → chin) and
+  back (crown → occiput → nape). Those curves are defined by the `x == 0` vertices of
+  `_HALF_VERTICES`; interior vertices only add creases, and moving a `x == 0` vertex
+  changes the profile. The mesh gives 32 / 62 / 68 faces at detail 0 / 1 / 2, symmetric
+  and without degenerate faces. Profile is still the weakest view: it is a faceted
+  low-poly chain of segments, not an anatomical curve. `test_asaro.py` locks the landmarks
+  (nose step, socket depth, chin/lip step, nape curve) plus symmetry, degenerate faces and
+  finite values; the suite is 63 tests (40 generator + 23 Asaro).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, detail). For Asaro the Guides and Hair tabs are disabled
   and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.

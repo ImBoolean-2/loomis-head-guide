@@ -100,3 +100,24 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   five tabs, the model combo, the Asaro panel and QAM action discovery.
 - **No light/shadow**: still five tabs (Settings, Move, Guides, Features, Hair); the 0.6.0
   light stays withdrawn.
+
+## 0.7.1 — 2026-11-10
+
+- **Asaro mesh reshaped for the profile** (commit `d9eeeb5`): the forehead, brow, eye
+  socket, nose, cheekbone, jaw, chin and occiput were re-placed so the head reads at 90°
+  and not only at three quarters. At 90° the projection keeps only (z, y), so the
+  silhouette is the face curve (forehead → brow → nasion → dorsum → tip → philtrum → lips
+  → chin) and the back curve (crown → occiput → nape); the interior vertices only add
+  creases.
+- **Measured profile landmarks**: the nose tip protrudes ≥ 0.2 from the brow/chin plane
+  with a 0.12 step under the nose (the dorsum starts in front of the nasion), the eye
+  socket sits ≥ 0.12 behind the glabella, the chin comes out ≥ 0.03 past the lower lip
+  with a 0.08 mental step, and the nape curves over ≥ 0.35 towards the neck instead of
+  being a vertical wall.
+- **Mesh grows with detail**: 32 / 62 / 68 faces at detail 0 / 1 / 2 (it was ~40 flat),
+  still symmetric and without degenerate faces or dead vertices.
+- **Tests**: 63 unit tests (40 generator + 23 Asaro). The 10 new Asaro tests check nose
+  projection, face-wall dispersion, chin/lip step, cranium and nape curves, profile and
+  three-quarter SVG validity, vertex/face symmetry, degenerate faces and finite values.
+- **Known limit**: the profile is still the weakest Asaro view — it is a faceted low-poly
+  study, so the silhouette is a chain of segments, not an anatomical curve.

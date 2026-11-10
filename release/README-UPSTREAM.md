@@ -1,7 +1,7 @@
-# Loomis Head Guide 0.7.0 — handoff notes
+# Loomis Head Guide 0.7.1 — handoff notes
 
 For **Nedeljko Umjetnik**, upstream author of the Loomis Method Head Guide. This fork
-starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.0.md`
+starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.1.md`
 explains the diff; this file is the short version: what you get, what to watch out for and
 how to try it.
 
@@ -25,6 +25,10 @@ how to try it.
    maps the unscoped enums PyQt6 removed.
 7. **Quieter undo** (0.7.0): redraw debounce 40 → 220 ms with an immediate flush on
    `sliderReleased`. See the limits below.
+8. **Asaro profile mesh** (0.7.1): the Asaro head was reshaped so the *profile* reads too —
+   forehead, brow, socket, nose, cheekbone, jaw, chin and occiput, with measured landmarks
+   (nose tip and nasion step, socket depth, chin/lip step, rounded occiput and nape). Faces
+   go to 32 / 62 / 68 at detail 0 / 1 / 2.
 
 ## Compatibility
 
@@ -42,14 +46,14 @@ how to try it.
 ## How to test
 
 ```bash
-# 1. Unit tests, no Krita/Qt needed (53 tests: 40 Loomis + 13 Asaro)
+# 1. Unit tests, no Krita/Qt needed (63 tests: 40 Loomis + 23 Asaro)
 cd loomis_head
 python3 -m unittest test_generator test_asaro
 
 # 2. Install
 cp -r loomis_head loomis_head.desktop \
   ~/.var/app/org.kde.krita/data/krita/pykrita/
-# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.0.zip
+# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.1.zip
 ```
 
 Then in Krita:
@@ -74,9 +78,11 @@ Then in Krita:
   undo entries. The 220 ms debounce and the flush on release reduce the noise; grouping them
   into one step needs C++ (or a layer swap that Krita groups, which would break
   `Guide.layer`/`guides.json`). This is documented debt, not a silent bug.
-- **The Asaro head is intentionally loose.** It is a ~40-face planar study for construction,
+- **The Asaro head is intentionally loose.** It is a low-poly planar study for construction,
   not an anatomical model: no ears, no neck, no hair, no light/shadow. Its Loomis setters
-  (`set_sidecut`, `set_show_face`, …) are no-ops so the shared UI does not crash.
+  (`set_sidecut`, `set_show_face`, …) are no-ops so the shared UI does not crash. Since
+  0.7.1 the profile reads (nose, socket, chin and occiput landmarks are tested), but it is
+  still the weakest view: a faceted chain of segments, not an anatomical curve.
 - **No light/shadow.** The 0.6.0 directional light was withdrawn in 0.6.1 and is not
   coming back in this fork.
 - `euclid.py` is still LGPL-2.1; everything else in the fork is GPL-3.0-only.

@@ -32,7 +32,9 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 - **Two head models**: a **Model** combo switches between the **Loomis** construction and a
   low-poly **Asaro** planar head (face contours with planes, edges and detail level). Each
   model keeps its own state, so switching back and forth does not lose features or hair,
-  and the shared position, rotation, scale and stroke follow the guide.
+  and the shared position, rotation, scale and stroke follow the guide. The Asaro mesh was
+  reshaped in 0.7.1 so the **profile** reads too (forehead, brow, socket, nose, cheekbone,
+  jaw, chin and occiput); profile is still its weakest view because the mesh is faceted.
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
@@ -73,7 +75,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.0.zip`.
+1. Download `release/loomis-head-guide-0.7.1.zip`.
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -156,7 +158,7 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The 53 unit tests (40 generator + 13 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
+The 63 unit tests (40 generator + 23 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
 needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
 
 Repository layout:
