@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 try:
-    from PyQt5.QtCore import QLocale
+    from .qt_compat import QLocale
 except ImportError:  # pruebas fuera de Krita
     QLocale = None
 

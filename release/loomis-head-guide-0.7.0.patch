@@ -1,0 +1,4310 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6ad7e04..8eac610 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -19,3 +19,84 @@ First public release of the imboolean fork.
+ - Credits and SPDX headers; GPL-3.0-only.
+ 
+ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator by lm0ss.
++
++## 0.5.1 — 2026-11-09
++
++- Docker UI: head, 3D preview, view selector, library and action buttons stay fixed;
++  Settings, Move, Guides, Features and Hair now live in scrollable tabs.
++- Fixed the feature and hair panels: after switching heads they wrote to the previous
++  model, so hiding mouth/ears/eyes or showing hair appeared to do nothing.
++- Fixed Quick Access Manager compatibility: the `actions` layout in the `.ui` shadowed
++  `QWidget.actions()` and broke QAM's action discovery for every quick action.
++- Preview: the head is scaled and centred so the chin is no longer clipped.
++
++## 0.6.0 — 2026-11-09
++
++- **Parametric proportions**: new `forehead_height`, `jaw_angle`, `cranium_width` and
++  `cranium_height` (head width/height), `cheekbone_height` and `chin_sharpness`
++  parameters, with setters, clamps and JSON round-trip. The five head presets were
++  updated to carry the new fields.
++- **Independent guide lines**: brow, eye, nose and mouth lines can be shown or hidden
++  separately. The existing mouth checkbox is now labelled "Mouth curve".
++- **Reilly rhythm curves**: an optional `rhythm` zone draws the Reilly flow lines
++  (crown → brow → nose → mouth → chin plus the lateral arches) with adjustable strength.
++- **Directional light**: azimuth, elevation and intensity, a terminator (or cel) shadow
++  clipped to the lateral band, and a new **Light** tab to drive it.
++- JSON compatibility with 0.5.1: missing keys fall back to the current defaults;
++  `jaw_angle` now defaults to `0.0`.
++- Tests: 31 generator tests plus 25 light tests, and an offscreen docker check with six
++  tabs.
++
++## 0.6.1 — 2026-11-09
++
++- **Light removed**: the directional light/shadow and the **Light** tab are gone (it was a
++  different product). The docker is back to five tabs: Settings, Move, Guides, Features,
++  Hair. `light.py`, `test_light.py`, `LightPanel`, `tabs.light` and the `light.*` strings
++  were deleted.
++- **Head sex**: new `head_sex` (male/female) with presets that combine with the head style;
++  changing the style re-applies the current sex.
++- **Eye socket**: sunken orbit (rim + displaced inner floor + depth ticks) drawn as a front
++  feature, independent of the eye circle.
++- **Brow ridge and cheeks**: a superciliary ridge curve above the brow with a projection
++  tick, and a cheek-fill curve from the cheekbone arch to the jaw.
++- New controls in **Features**: Sex combo and a "Socket and brows" section (socket
++  checkbox, socket depth/size, brow ridge, cheek fullness).
++- Tests: 40 generator tests, and an offscreen docker check with five tabs, no Light tab,
++  QAM action discovery, sex presets and socket controls.
++- Compatibility: head JSON from 0.5.1 and 0.6.0 loads with the new keys at their defaults.
++- Note: the 0.6.0 entry is kept as history; 0.6.1 withdraws the light.
++
++## 0.7.0 — 2026-11-10
++
++- **Head model registry** (`models.py`): `MODELS`, `DEFAULT_MODEL`, `create_model()` and
++  `supported_models()`. It is the only module that knows the implementations; the
++  generator and the models never import it, so there are no cycles. Unknown ids return
++  `None` and the caller decides the message.
++- **Asaro head** (`asaro.py`): a low-poly planar head (~40 faces: forehead, brow, socket,
++  nose, cheekbone, jaw, chin) drawn as orthographic face contours with painter's algorithm.
++  Front edges use `front_line_stroke`, back edges use `back_line_stroke` and `dash_back`.
++  Own parameters: `show_planes`, `show_edges`, `detail` (0 coarse, 1 standard, 2 fine). The
++  Loomis interface (`set_sidecut`, `set_show_face`, …) exists as a no-op so the shared UI
++  does not break. No light or shadow.
++- **Model switch with per-model stash**: a **Model** combo (Loomis / Asaro) above the
++  Features panel and a `QStackedWidget` with the Loomis features and the new `AsaroPanel`.
++  Switching stashes the outgoing model's full state and restores the incoming one, then
++  re-applies the shared transform (scale, position, rotation, stroke, zone colours) so the
++  guide does not jump. Inactive states are persisted in `guides.json` under each guide's
++  `models` key and survive a restart. For Asaro the Guides and Hair tabs are disabled and
++  the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
++- **Qt6 shim** (`qt_compat.py`): every module imports Qt from here. It maps the unscoped
++  enums PyQt6 removed (`Qt.Horizontal`, `QSizePolicy.Expanding`, …), `exec_dialog()` and
++  `activated_index()`. **PyQt5 is tested on Krita 5.3.4.1; PyQt6 is only simulated, not
++  tested on a real Krita 6.**
++- **Quieter undo (mitigation, not a macro)**: the vector-layer redraw debounce goes from
++  40 ms to 220 ms and the canvas sliders flush on `sliderReleased`, so a drag leaves far
++  fewer undo entries. Krita 5.3.4's `krita.pyi` exposes neither `beginUndo`/`endUndo` nor
++  `KUndo2Command`, so a single undo step needs C++ (or a layer swap that Krita groups,
++  which would break `Guide.layer`/`guides.json`). Documented as debt.
++- **Share format**: `model` may be `loomis` or `asaro`; the loader resolves it through the
++  registry. New `heads/example-asaro.json`.
++- **Tests**: 53 unit tests (40 generator + 13 Asaro), plus the offscreen docker check with
++  five tabs, the model combo, the Asaro panel and QAM action discovery.
++- **No light/shadow**: still five tabs (Settings, Move, Guides, Features, Hair); the 0.6.0
++  light stays withdrawn.
+diff --git a/README.md b/README.md
+index 687dfa1..1ac5e5e 100644
+--- a/README.md
++++ b/README.md
+@@ -27,12 +27,26 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
+ 
+ ## Features
+ 
++- **Tabbed docker**: the head, 3D preview, view selector, library and action buttons stay
++  fixed; Settings, Move, Guides, Features and Hair live in scrollable tabs.
++- **Two head models**: a **Model** combo switches between the **Loomis** construction and a
++  low-poly **Asaro** planar head (face contours with planes, edges and detail level). Each
++  model keeps its own state, so switching back and forth does not lose features or hair,
++  and the shared position, rotation, scale and stroke follow the guide.
+ - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
+   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
+ - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
+   touch the others.
+ - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
+-  lines, eye sockets, brows, nose, ears and mouth.
++  lines, eye sockets, brows, nose, ears and mouth. Brow, eye, nose and mouth guide lines
++  can be shown or hidden independently.
++- **Head sex and structure**: male/female presets that combine with the head style; a
++  sunken orbital socket (rim, inner floor and depth ticks), a superciliary brow ridge and a
++  cheek-fill curve make the skull read in 3D.
++- **Parametric proportions**: forehead height, jaw angle, cranium width/height, cheekbone
++  height and chin sharpness, plus caricature and head-type presets.
++- **Reilly rhythm curves**: optional crown→brow→nose→mouth→chin flow lines and lateral
++  arches, with adjustable strength.
+ - **Caricature and head types**: realistic, semi, anime, chibi and caricature presets;
+   cranium, jaw, cheek, face width and jaw drop are adjustable.
+ - **Custom hair**: hairline, arch, tilt, part position, part pattern (straight, zigzag,
+@@ -48,6 +62,9 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
+   `license`, `tags`, `head`). See [`heads/`](heads/README.md).
+ - **Languages**: English, Spanish, Portuguese and French with a language selector in the
+   panel; the choice is remembered.
++- **Qt5/Qt6 ready**: all Qt imports go through `qt_compat.py`, which also maps the enums
++  PyQt6 removed. Tested on PyQt5 (Krita 5.3.4.1); PyQt6 is implemented but not tested on a
++  real Krita 6.
+ - **Standalone or integrated**: works on its own; if
+   [Grimoire of Color](https://github.com/ImBoolean-2/color-grimoire) is installed it can
+   also save the head into the active OC.
+@@ -56,7 +73,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
+ 
+ ### ZIP (recommended)
+ 
+-1. Download `release/loomis-head-guide-0.5.0.zip`.
++1. Download `release/loomis-head-guide-0.7.0.zip`.
+ 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
+ 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
+    **Loomis Method Head Guide**.
+@@ -73,7 +90,16 @@ cp -r loomis_head loomis_head.desktop \
+   ~/.var/app/org.kde.krita/data/krita/pykrita/
+ ```
+ 
+-Tested with Krita **5.3.4.1** (Flatpak, PyQt5). Krita 6 (PyQt6) is not supported yet.
++Tested with Krita **5.3.4.1** (Flatpak, PyQt5). The plugin imports Qt through
++`qt_compat.py` and is prepared for **Krita 6 / PyQt6**, but that combination has only been
++simulated, not run on a real Krita 6.
++
++## Undo
++
++Krita 5.3.4's Python API does not expose `beginUndo`/`endUndo` or `KUndo2Command`, so the
++plugin cannot group a redraw into one undo step. As a mitigation the vector layer redraws
++with a 220 ms debounce and flushes when a slider is released, which keeps a drag to a few
++undo entries instead of dozens. A real single-step undo needs C++ and is tracked as debt.
+ 
+ ## Languages
+ 
+@@ -119,18 +145,19 @@ Use **Export head…** in the Library section. The JSON looks like:
+ ```
+ 
+ Put a JSON and a 400×400 preview PNG in `heads/<author>/` (see
+-[`heads/README.md`](heads/README.md)). `model` is reserved for future head engines; this
+-version only accepts `loomis`.
++[`heads/README.md`](heads/README.md)). `model` is `loomis` or `asaro`; the loader resolves
++it through the model registry and refuses an unknown model with a message. An Asaro head
++uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
+ 
+ ## Development
+ 
+ ```bash
+ cd loomis_head
+-python3 -m unittest test_generator.py -v
++python3 -m unittest test_generator test_asaro -v
+ ```
+ 
+-The generator tests do not need Krita, Qt or PyQt5. The UI/docker needs Krita; load it
+-with `Tools → Scripts → Import Python Plugins` or by copying the folder.
++The 53 unit tests (40 generator + 13 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
++needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
+ 
+ Repository layout:
+ 
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 4c33c72..c8e49a4 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -8,17 +8,80 @@ needed by the docker and the preview widget; the geometry and its tests do not i
+ | File | Role |
+ | --- | --- |
+ | `loomis_head_generator.py` | Pure Python Loomis geometry, parameters, `to_dict`/`from_dict`, SVG |
++| `asaro.py` | Pure Python Asaro planar head: low-poly mesh, projection, SVG |
++| `models.py` | Model registry: `MODELS`, `DEFAULT_MODEL`, `create_model`, `supported_models` |
++| `qt_compat.py` | PyQt5/PyQt6 shim: every module imports Qt from here |
+ | `loomis_head_plugin.py` | Docker, Krita integration, guide manager, presets, Grimoire bridge |
+ | `preview.py` | `QSvgRenderer` preview and arcball rotation |
+-| `features_dialog.py` | `FeaturePanel`: caricature, feature lines, hair; embedded in the docker |
++| `features_dialog.py` | `FeaturePanel` (sex, caricature, proportions, socket/brows, feature lines, hair, Reilly), `HairPanel` and `AsaroPanel`; embedded in the docker |
+ | `i18n.py` + `translations/*.json` | Language override/locale and strings |
+ | `linalg.py`, `euclid.py`, `geom_polyline.py` | Math and SVG path helpers |
+ | `trackball.py` | Legacy widget kept for reference (the preview replaces it) |
++| `test_generator.py` | Pure-Python Loomis unit tests (no Krita/Qt needed) |
++| `test_asaro.py` | Pure-Python Asaro unit tests and registry checks |
++
++`models.py` is the only module that knows the implementations, and it imports them; neither
++`loomis_head_generator.py` nor `asaro.py` imports `models.py`, so there is no cycle. The
++docker asks `create_model(model_id)` and works against the common interface
++(`set_scale`, `set_position_x/y`, `set_quaternion`, `set_stroke_color`,
++`set_front_line_stroke`, `set_back_line_stroke`, `set_zone_colors`,
++`build_svg(width, height, dash_back, samples)`, `to_dict`, `from_dict`). An unknown id
++returns `None` and the caller shows the message.
++
++`qt_compat.py` is the single Qt import point: it picks PyQt5 or PyQt6, maps the unscoped
++enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePolicy.Expanding`,
++`QStandardPaths`, `QColorDialog`, …), and exposes `exec_dialog()` and `activated_index()`.
++
++## Models and the model switch
++
++- `AsaroHead` (`asaro.py`) draws a ~40-face low-poly head as face contours: orthographic
++  projection with the same scale as the generator (`min(width, height) * 0.3 * scale`),
++  painter's algorithm by mean z, front edges with `front_line_stroke`, back edges with
++  `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`, `detail`
++  (0..2). It also carries the Loomis attributes and setters as defaults/no-ops so
++  `_sync_ui_from_model` does not break; the UI hides them for Asaro.
++- The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
++  is `AsaroPanel` (planes, edges, detail). For Asaro the Guides and Hair tabs are disabled
++  and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
++- `_switch_model()` stashes the outgoing model (`to_dict()`) and restores the incoming one
++  from the guide's `model_states`, then always re-applies `_COMMON_STATE_FIELDS` (scale,
++  position, rotation, stroke, zone colours) from the outgoing model, so the guide keeps its
++  place and the stash only contributes model-specific state. The first time a model is
++  used, the outgoing `to_dict()` is fed to `from_dict()`, which ignores unknown keys.
++- The stash persists per guide in `guides.json` under `models` (the active model is the
++  guide's `state`); `_save_doc_state()` deep-copies it so the JSON never shares references.
++
++## Docker UI
++
++`LoomisProportionsDocker` (`loomis_head_plugin.py`) keeps a fixed top block (head
++selector, 3D preview, view selector, library and actions) and five scrollable tabs:
++**Settings**, **Move**, **Guides**, **Features** and **Hair**. The Features page hosts a
++**Model** combo and a `QStackedWidget` with `FeaturePanel` (Loomis) and `AsaroPanel`
++(planes, edges, detail) from `features_dialog.py`; the Hair page hosts `HairPanel`. Each
++panel is bound to the active model with `set_model`/`sync_from_model` when the guide or the
++model changes. With Asaro active, the Guides and Hair tabs are disabled and the Loomis-only
++Settings rows are hidden.
++
++## Head structure
++
++`FeaturePanel` drives the skull structure on the active model:
++
++- **Sex** combo (`head_sex`): applies the male or female preset (`SEX_PRESETS`) and stores
++  the choice. Switching head style (`_apply_type`) re-applies the current sex afterwards.
++- **Eye socket** (`show_eye_socket`, `eye_socket_depth`, `eye_socket_size`): the generator
++  draws the orbital rim, a smaller floor displaced towards the nose and down, and two depth
++  ticks, as `feature_front`. It is independent of the eye circle (`show_eyes`).
++- **Brow ridge** (`brow_ridge`): a superciliary ridge curve above the brow plus a central
++  projection tick.
++- **Cheek fullness** (`cheek_fullness`): a quadratic fill curve from the cheekbone arch
++  (`cheek_rim_touch`) to the jaw corner, in the `cheek` zone; `cheek` still controls the
++  zygomatic prominence.
+ 
+ ## Guide manager
+ 
+-- A `Guide` is one head: a `LoomisHead3D`, one vector layer `Loomis Head N`, a name and
+-  the last known layer centre.
++- A `Guide` is one head: a model instance (`LoomisHead3D` or `AsaroHead`), one vector layer
++  `Loomis Head N`, a name, the last known layer centre and `model_states`, the stash of the
++  models that are not active for that guide.
+ - `ensure_guide()` adopts existing `Loomis Head*` layers before creating anything. On the
+   first run it migrates the old repeated `Loomis Method Head Guide` layers, keeping the
+   topmost one and removing the duplicates (undoable in Krita).
+@@ -36,7 +99,7 @@ In Krita's app data directory (`QStandardPaths.AppDataLocation`):
+ loomis_head/
+ ├── settings.json   language
+ ├── presets.json    named presets and per-OC presets
+-└── guides.json     per-document guides: state + centre + active index
++└── guides.json     per-document guides: state + models stash + centre + active index
+ ```
+ 
+ Positions in `guides.json` and presets are normalised (0–1 of the document size) so they
+@@ -55,5 +118,7 @@ the plugin works standalone.
+   selector.
+ - **Hair/features**: generator parameter + setter + `to_dict`/`from_dict` + panel control +
+   test.
+-- **Head models**: the share format has `model`; a new engine must expose
+-  `build_svg(width, height, samples)` and reject unknown models in the loader.
++- **Head models**: add the class, register it in `MODELS` in `models.py`, and expose the
++  common interface (`build_svg(width, height, dash_back, samples)`, `to_dict`, `from_dict`,
++  the transform and stroke setters). The share format already carries `model` and the loader
++  resolves it through `create_model()`; unknown ids are refused with a message.
+diff --git a/docs/media/README.md b/docs/media/README.md
+index ab73ebf..d84ddd0 100644
+--- a/docs/media/README.md
++++ b/docs/media/README.md
+@@ -6,6 +6,7 @@
+ | `head-front.png`, `head-three-quarter.png`, `head-back.png` | Real renders at 800×800 |
+ | `zone-colors.png` | Front render showing the per-zone colours |
+ | `hair-patterns.png` | Real renders of straight/zigzag/spiky/curly hair |
++| `promo.png` | 1800×1200 promotional image: real head renders + panel mockup |
+ | `panel.png` | Screenshot of the HTML panel mockup (not a real Krita screenshot) |
+ | `panel-preview.html` | Browser mockup of the panel layout |
+ 
+diff --git a/heads/README.md b/heads/README.md
+index 4d2dc20..24c4d3e 100644
+--- a/heads/README.md
++++ b/heads/README.md
+@@ -1,8 +1,8 @@
+ # Cabezas para compartir
+ 
+-Cada archivo es una cabeza Loomis exportada desde el plugin (**Exportar cabeza…**). Se
+-puede cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC
+-del Grimorio de Color.
++Cada archivo es una cabeza exportada desde el plugin (**Exportar cabeza…**). Se puede
++cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC del
++Grimorio de Color.
+ 
+ ## Formato
+ 
+@@ -19,10 +19,15 @@ del Grimorio de Color.
+ }
+ ```
+ 
+-- `model`: solo `loomis` en esta versión. Los modelos futuros (Reilly, Asaro, anime) usarán
+-  el mismo envoltorio y el cargador avisará si no los entiende.
+-- `head`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
+-  caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
++- `model`: `loomis` o `asaro`. El cargador resuelve el modelo con el registro de
++  `loomis_head/models.py` (`create_model`); si no lo entiende, avisa y no carga la cabeza.
++- `head`: el bloque completo del generador que corresponda al `model`.
++  - `loomis`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
++    caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
++  - `asaro`: escala, posición, rotación, trazos y color, más `showPlanes` (contornos de
++    planos), `showEdges` (aristas de pliegue y silueta) y `detail` (0 grueso, 1 estándar,
++    2 fino). Los campos de Loomis viajan igual para no romper la interfaz, pero en Asaro
++    no cambian la malla.
+ - `author`, `license` y `tags` son libres; sirven para acreditar y filtrar.
+ 
+ ## Convención sugerida
+@@ -32,6 +37,7 @@ heads/
+ ├── README.md
+ ├── example-head.json
+ ├── example-head.png     (preview 400x400)
++├── example-asaro.json
+ └── <autor>/<nombre>.json
+ ```
+ 
+diff --git a/heads/example-asaro.json b/heads/example-asaro.json
+new file mode 100644
+index 0000000..822ed94
+--- /dev/null
++++ b/heads/example-asaro.json
+@@ -0,0 +1,42 @@
++{
++  "format": "loomis-head",
++  "version": 1,
++  "model": "asaro",
++  "name": "Asaro planos",
++  "author": "imboolean",
++  "license": "CC0-1.0",
++  "tags": [
++    "asaro",
++    "planos",
++    "base"
++  ],
++  "head": {
++    "version": 1,
++    "generator": "asaro",
++    "model": "asaro",
++    "scale": 1.0,
++    "positionX": 0.0,
++    "positionY": 0.0,
++    "rotation": [
++      1.0,
++      0.0,
++      0.0,
++      0.0
++    ],
++    "showPlanes": true,
++    "showEdges": true,
++    "detail": 1,
++    "frontStroke": 10.0,
++    "backStroke": 7.0,
++    "strokeColor": "#6A54E7",
++    "useZoneColors": false,
++    "sideCut": 0.66,
++    "faceAge": 1.0,
++    "chinWidth": 1.0,
++    "showFace": true,
++    "showArrow": true,
++    "showSilhouette": true,
++    "showSideRims": true,
++    "showSideCross": true
++  }
++}
+diff --git a/heads/example-head.json b/heads/example-head.json
+index 9d6e19b..b71d004 100644
+--- a/heads/example-head.json
++++ b/heads/example-head.json
+@@ -30,6 +30,20 @@
+     "cheek": 0.0,
+     "faceWidth": 1.0,
+     "jawDrop": 1.0,
++    "foreheadHeight": 1.0,
++    "jawAngle": 0.0,
++    "craniumWidth": 1.0,
++    "craniumHeight": 1.0,
++    "cheekboneHeight": 0.5,
++    "chinSharpness": 0.0,
++    "headSex": 0,
++    "browRidge": 0.5,
++    "eyeSocketDepth": 0.5,
++    "eyeSocketSize": 0.55,
++    "showEyeSocket": true,
++    "cheekFullness": 0.5,
++    "showRhythm": false,
++    "rhythmStrength": 0.6,
+     "showFeatures": true,
+     "showHair": false,
+     "hairLine": 0.68,
+@@ -54,6 +68,10 @@
+     "showMouth": true,
+     "showBrows": true,
+     "showFace": true,
++    "showBrowGuide": true,
++    "showEyeGuide": true,
++    "showNoseGuide": true,
++    "showMouthGuide": true,
+     "showArrow": true,
+     "showSilhouette": true,
+     "showSideRims": true,
+diff --git a/loomis_head/__init__.py b/loomis_head/__init__.py
+index ce3bc9f..dee82cf 100644
+--- a/loomis_head/__init__.py
++++ b/loomis_head/__init__.py
+@@ -1,4 +1,4 @@
+-__version__ = "0.5.0"
++__version__ = "0.7.0"
+ 
+ # SPDX-FileCopyrightText: 2025 lm0ss
+ # SPDX-FileCopyrightText: 2026 Nedeljko Umjetnik
+diff --git a/loomis_head/asaro.py b/loomis_head/asaro.py
+new file mode 100644
+index 0000000..1c4da59
+--- /dev/null
++++ b/loomis_head/asaro.py
+@@ -0,0 +1,460 @@
++# SPDX-FileCopyrightText: 2026 imboolean
++# SPDX-License-Identifier: GPL-3.0-only
++
++"""Cabeza Asaro: malla low-poly de planos, sin luz ni sombra.
++
++El plugin usa la misma interfaz que :class:`LoomisHead3D` (escala, posicion,
++quaternion, trazos, toggles y ``to_dict``/``from_dict``) para que el panel y la
++capa vectorial funcionen sin cambios. Lo propio de Asaro es la malla de planos:
++frente, ceja, cuenca, nariz, pomulo, mandibula y menton, dibujada solo con
++aristas (sin relleno).
++"""
++
++import math
++from collections.abc import Sequence
++
++from .euclid import Vector2, Vector3
++from .geom_polyline import path_str, split_front_back
++from .linalg import Poly3, Quaternion, q_identity, q_normalize
++
++# Colores de zona (mismos que el generador Loomis para no romper la paleta).
++PLANE_COLOR = "#6A54E7"
++EDGE_COLOR = "#54C4E7"
++
++# Un plano solo se dibuja si su normal mira a camara con este margen.
++_FACING_EPS = 1e-6
++# Diferencia de normal (grados) para considerar una arista un pliegue real.
++_CREASE_DEG = 25.0
++
++# Vertices de la mitad derecha (x >= 0). Los de x == 0 son la linea central y
++# se comparten con la mitad izquierda; el resto se refleja.
++_HALF_VERTICES: dict[str, tuple[float, float, float]] = {
++    "A1": (0.00, 0.84, 0.50),   # frente, arriba en el centro
++    "A2": (0.36, 0.80, 0.58),   # frente, medio
++    "A3": (0.60, 0.62, 0.40),   # frente, lateral
++    "B1": (0.00, 0.44, 0.90),   # ceja, centro
++    "B2": (0.28, 0.42, 0.90),   # ceja, medio
++    "B3": (0.54, 0.38, 0.72),   # ceja, lateral
++    "C1": (0.14, 0.28, 0.84),   # cuenca, interior
++    "C2": (0.46, 0.24, 0.70),   # cuenca, exterior
++    "C3": (0.30, 0.12, 0.78),   # cuenca, fondo
++    "D1": (0.00, 0.24, 1.00),   # nariz, puente
++    "D2": (0.13, 0.18, 0.98),   # nariz, lateral alto
++    "D3": (0.18, -0.04, 1.02),  # nariz, lateral bajo
++    "D4": (0.24, -0.14, 0.90),  # nariz, ala
++    "D5": (0.00, -0.04, 1.20),  # nariz, punta
++    "D6": (0.00, -0.16, 0.98),  # nariz, base
++    "E1": (0.54, 0.04, 0.62),   # pomulo
++    "E2": (0.38, -0.08, 0.84),  # mejilla, frontal
++    "E3": (0.40, -0.30, 0.66),  # mejilla, baja
++    "E4": (0.72, 0.18, 0.26),   # arco cigomatico
++    "F1": (0.24, -0.40, 0.86),  # boca, comisura
++    "F2": (0.00, -0.28, 0.92),  # filtro
++    "F3": (0.00, -0.38, 0.90),  # labio superior
++    "F4": (0.13, -0.52, 0.84),  # labio inferior, lateral
++    "F5": (0.00, -0.50, 0.88),  # labio inferior, centro
++    "G1": (0.20, -0.80, 0.66),  # menton, lateral
++    "G2": (0.00, -0.68, 0.82),  # menton, frontal
++    "G3": (0.00, -1.00, 0.38),  # menton, bajo
++    "G4": (0.28, -0.90, 0.22),  # mandibula, bajo
++    "H1": (0.46, -0.46, 0.34),  # mandibula, esquina
++    "H2": (0.40, -0.66, 0.44),  # mandibula, lateral
++    "H3": (0.44, -0.50, 0.00),  # mandibula, atras
++    "H4": (0.00, -1.04, 0.00),  # bajo el menton
++    "I1": (0.68, 0.50, 0.20),   # sien
++    "I2": (0.58, 0.70, -0.18),  # lateral, arriba
++    "I3": (0.70, 0.28, -0.16),  # oreja, arriba
++    "I4": (0.68, -0.12, -0.16), # oreja, abajo
++    "I5": (0.74, 0.14, -0.22),  # lateral, medio
++    "I6": (0.50, 0.26, -0.62),  # lateral, atras
++    "I7": (0.36, 0.10, -0.68),  # nuca, medio
++    "I8": (0.24, -0.80, -0.36), # cuello, lateral
++    "I9": (0.00, 0.86, -0.28),  # coronilla, atras
++    "I10": (0.00, 0.12, -0.74), # nuca, centro
++    "I11": (0.00, -0.60, -0.34), # nuca, baja
++}
++
++# (nivel de detalle minimo, vertices en orden). Nivel 0 = planos grandes,
++# 1 = construccion estandar, 2 = planos finos (sien, oreja, cuello).
++_HALF_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
++    (0, ("A1", "A2", "B2", "B1")),
++    (0, ("A2", "A3", "B3", "B2")),
++    (0, ("B1", "B2", "D2", "D1")),
++    (0, ("B2", "B3", "C2", "C1")),
++    (0, ("D1", "D2", "D3", "D5")),
++    (0, ("D5", "D3", "D4", "D6")),
++    (0, ("C2", "E1", "E2", "C3")),
++    (0, ("E1", "E4", "H1", "E3")),
++    (0, ("F2", "E2", "F1", "F3")),
++    (0, ("F3", "F1", "F4", "F5")),
++    (0, ("E3", "H1", "H2", "G1")),
++    (0, ("F4", "G1", "G2", "F5")),
++    (1, ("C1", "C2", "C3")),
++    (1, ("C1", "C3", "D2", "D1")),
++    (1, ("G1", "G4", "G3", "G2")),
++    (1, ("H1", "H3", "H2")),
++    (1, ("H2", "H3", "I8", "G4")),
++    (1, ("I1", "I2", "I3", "E4")),
++    (1, ("E4", "I5", "H1")),
++    (1, ("I5", "I4", "I8", "H3")),
++    (1, ("I2", "I9", "I6")),
++    (1, ("I6", "I7", "I10")),
++    (1, ("I7", "I10", "I11")),
++    (1, ("I7", "I11", "I8")),
++    (1, ("A1", "A3", "I9")),
++    (1, ("A3", "I2", "I9")),
++    (2, ("A3", "I1", "B3")),
++    (2, ("C3", "E2", "D3")),
++    (2, ("I3", "I4", "I5")),
++    (2, ("I9", "I6", "I7")),
++    (2, ("I9", "I7", "I10")),
++)
++
++
++def _mirrored_name(name: str) -> str:
++    x = _HALF_VERTICES[name][0]
++    return name if abs(x) < 1e-9 else name + "L"
++
++
++def _build_vertices() -> dict[str, tuple[float, float, float]]:
++    out: dict[str, tuple[float, float, float]] = {}
++    for name, (x, y, z) in _HALF_VERTICES.items():
++        out[name] = (x, y, z)
++        if abs(x) >= 1e-9:
++            out[name + "L"] = (-x, y, z)
++    return out
++
++
++_VERTICES = _build_vertices()
++_MIRROR = {name: _mirrored_name(name) for name in _HALF_VERTICES}
++
++
++def _newell(points: Sequence[tuple[float, float, float]]) -> tuple[float, float, float]:
++    """Normal de un poligono (puede no ser plano), por el metodo de Newell."""
++    nx = ny = nz = 0.0
++    n = len(points)
++    for i in range(n):
++        x0, y0, z0 = points[i]
++        x1, y1, z1 = points[(i + 1) % n]
++        nx += (y0 - y1) * (z0 + z1)
++        ny += (z0 - z1) * (x0 + x1)
++        nz += (x0 - x1) * (y0 + y1)
++    length = math.sqrt(nx * nx + ny * ny + nz * nz)
++    if length < 1e-12:
++        return (0.0, 0.0, 0.0)
++    return (nx / length, ny / length, nz / length)
++
++
++def _finite(value: object, default: float) -> float:
++    try:
++        number = float(value)  # type: ignore[arg-type]
++    except (TypeError, ValueError):
++        return default
++    return number if math.isfinite(number) else default
++
++
++def _clamp(value: object, low: float, high: float, default: float) -> float:
++    number = _finite(value, default)
++    return max(low, min(high, number))
++
++
++class AsaroHead:
++    """Cabeza Asaro con la interfaz del generador Loomis."""
++
++    model_id = "asaro"
++
++    def __init__(self) -> None:
++        self.radius: float = 1.0
++        self.scale: float = 1.0
++        self.position_x: float = 0.0
++        self.position_y: float = 0.0
++        # Atributos propios de Asaro.
++        self.show_planes: bool = True
++        self.show_edges: bool = True
++        self.detail: int = 1
++        # Trazos y color.
++        self.front_line_stroke: float = 10.0
++        self.back_line_stroke: float = 7.0
++        self.stroke_color: str = "#6A54E7"
++        self.use_zone_colors: bool = False
++        # Compatibilidad con la interfaz Loomis: la UI de Asaro los oculta y
++        # estos valores no cambian la malla, solo viajan en el preset.
++        self.side_cut: float = 0.66
++        self.face_age: float = 1.0
++        self.chin_width: float = 1.0
++        self.show_face: bool = True
++        self.show_arrow: bool = True
++        self.show_silhouette: bool = True
++        self.show_side_rims: bool = True
++        self.show_side_cross: bool = True
++        self.show_features: bool = False
++        self.q: Quaternion = q_identity()
++
++    # --- interfaz comun ---------------------------------------------------
++    def set_quaternion(self, q: Quaternion) -> None:
++        self.q = q_normalize(q)
++
++    def set_scale(self, scale: float) -> None:
++        self.scale = _clamp(scale, 0.05, 5.0, 1.0)
++
++    def set_position_x(self, position_x: float) -> None:
++        self.position_x = _finite(position_x, self.position_x)
++
++    def set_position_y(self, position_y: float) -> None:
++        self.position_y = _finite(position_y, self.position_y)
++
++    def set_stroke_color(self, color: str) -> None:
++        if isinstance(color, str):
++            self.stroke_color = color
++
++    def set_front_line_stroke(self, front_line_stroke: float) -> None:
++        self.front_line_stroke = _clamp(front_line_stroke, 0.5, 60.0, 10.0)
++
++    def set_back_line_stroke(self, back_line_stroke: float) -> None:
++        self.back_line_stroke = _clamp(back_line_stroke, 0.5, 60.0, 7.0)
++
++    def set_zone_colors(self, enable: bool) -> None:
++        self.use_zone_colors = bool(enable)
++
++    # --- propios ----------------------------------------------------------
++    def set_show_planes(self, enable: bool) -> None:
++        self.show_planes = bool(enable)
++
++    def set_show_edges(self, enable: bool) -> None:
++        self.show_edges = bool(enable)
++
++    def set_detail(self, detail: int) -> None:
++        try:
++            level = int(round(float(detail)))
++        except (TypeError, ValueError):
++            level = 1
++        self.detail = max(0, min(2, level))
++
++    # --- compatibilidad Loomis (sin efecto en la malla) -------------------
++    def set_sidecut(self, side_cut: float) -> None:
++        self.side_cut = _clamp(side_cut, 0.05, 0.95, 0.66)
++
++    def set_face_age(self, face_age: float) -> None:
++        self.face_age = _clamp(face_age, 0.0, 1.0, 1.0)
++
++    def set_chin_width(self, chin_width: float) -> None:
++        self.chin_width = _clamp(chin_width, 0.5, 1.5, 1.0)
++
++    def set_show_face(self, enable: bool) -> None:
++        self.show_face = bool(enable)
++
++    def set_arrow(self, enable: bool) -> None:
++        self.show_arrow = bool(enable)
++
++    def set_silhouette(self, enable: bool) -> None:
++        self.show_silhouette = bool(enable)
++
++    def set_side_rims(self, enable: bool) -> None:
++        self.show_side_rims = bool(enable)
++
++    def set_side_cross(self, enable: bool) -> None:
++        self.show_side_cross = bool(enable)
++
++    def set_show_features(self, enable: bool) -> None:
++        self.show_features = bool(enable)
++
++    # --- preset -----------------------------------------------------------
++    def to_dict(self) -> dict:
++        return {
++            "version": 1,
++            "generator": "asaro",
++            "model": "asaro",
++            "scale": self.scale,
++            "positionX": self.position_x,
++            "positionY": self.position_y,
++            "rotation": [self.q.w, self.q.x, self.q.y, self.q.z],
++            "showPlanes": self.show_planes,
++            "showEdges": self.show_edges,
++            "detail": self.detail,
++            "frontStroke": self.front_line_stroke,
++            "backStroke": self.back_line_stroke,
++            "strokeColor": self.stroke_color,
++            "useZoneColors": self.use_zone_colors,
++            # Compatibilidad con presets y UI de Loomis.
++            "sideCut": self.side_cut,
++            "faceAge": self.face_age,
++            "chinWidth": self.chin_width,
++            "showFace": self.show_face,
++            "showArrow": self.show_arrow,
++            "showSilhouette": self.show_silhouette,
++            "showSideRims": self.show_side_rims,
++            "showSideCross": self.show_side_cross,
++        }
++
++    def from_dict(self, data: dict) -> None:
++        src = data if isinstance(data, dict) else {}
++
++        def num(key: str, default: float) -> float:
++            return _finite(src.get(key, default), default)
++
++        def flag(key: str, default: bool) -> bool:
++            return bool(src.get(key, default))
++
++        self.set_scale(num("scale", self.scale))
++        self.set_position_x(num("positionX", self.position_x))
++        self.set_position_y(num("positionY", self.position_y))
++        rotation = src.get("rotation")
++        if isinstance(rotation, (list, tuple)) and len(rotation) == 4:
++            try:
++                w, x, y, z = (_finite(v, 0.0) for v in rotation)
++                quaternion = Quaternion(w, x, y, z)
++                if abs(quaternion.magnitude()) > 1e-9:
++                    self.set_quaternion(quaternion)
++            except (TypeError, ValueError):
++                pass
++        self.set_show_planes(flag("showPlanes", self.show_planes))
++        self.set_show_edges(flag("showEdges", self.show_edges))
++        self.set_detail(num("detail", self.detail))
++        self.set_front_line_stroke(num("frontStroke", self.front_line_stroke))
++        self.set_back_line_stroke(num("backStroke", self.back_line_stroke))
++        self.set_zone_colors(flag("useZoneColors", self.use_zone_colors))
++        color = src.get("strokeColor")
++        if isinstance(color, str) and color.startswith("#") and len(color) in (4, 7):
++            self.stroke_color = color
++        self.set_sidecut(num("sideCut", self.side_cut))
++        self.set_face_age(num("faceAge", self.face_age))
++        self.set_chin_width(num("chinWidth", self.chin_width))
++        self.set_show_face(flag("showFace", self.show_face))
++        self.set_arrow(flag("showArrow", self.show_arrow))
++        self.set_silhouette(flag("showSilhouette", self.show_silhouette))
++        self.set_side_rims(flag("showSideRims", self.show_side_rims))
++        self.set_side_cross(flag("showSideCross", self.show_side_cross))
++
++    # --- malla ------------------------------------------------------------
++    def _faces(self) -> list[tuple[str, ...]]:
++        """Caras completas (derecha + reflejada) hasta el nivel de detalle."""
++        faces: list[tuple[str, ...]] = []
++        for level, names in _HALF_FACES:
++            if level > self.detail:
++                continue
++            faces.append(names)
++            faces.append(tuple(_MIRROR[name] for name in names))
++        return faces
++
++    def _face_normal(self, names: Sequence[str]) -> tuple[float, float, float]:
++        points = [_VERTICES[name] for name in names]
++        nx, ny, nz = _newell(points)
++        cx = sum(p[0] for p in points) / len(points)
++        cy = sum(p[1] for p in points) / len(points)
++        cz = sum(p[2] for p in points) / len(points)
++        if nx * cx + ny * cy + nz * cz < 0.0:
++            return (-nx, -ny, -nz)
++        return (nx, ny, nz)
++
++    def _edges(self, faces: Sequence[Sequence[str]]) -> list[tuple[str, str]]:
++        """Aristas unicas de pliegue o silueta, cada una una sola vez."""
++        adjacency: dict[tuple[str, str], list[tuple[float, float, float]]] = {}
++        for names in faces:
++            normal = self._face_normal(names)
++            n = len(names)
++            for i in range(n):
++                a = names[i]
++                b = names[(i + 1) % n]
++                key = (a, b) if a < b else (b, a)
++                adjacency.setdefault(key, []).append(normal)
++
++        cos_limit = math.cos(math.radians(_CREASE_DEG))
++        out: list[tuple[str, str]] = []
++        for key, normals in adjacency.items():
++            if len(normals) == 1:
++                out.append(key)
++                continue
++            if len(normals) > 2:
++                out.append(key)
++                continue
++            n0, n1 = normals
++            dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2]
++            if dot < cos_limit:
++                out.append(key)
++        return out
++
++    def _to_camera(self, point: tuple[float, float, float]) -> Vector3:
++        x, y, z = point
++        return self.q * Vector3(x, y, z)
++
++    def _to_screen(self, point: Vector3, s: float) -> Vector2:
++        return Vector2(point.x * s + self.position_x, self.position_y - point.y * s)
++
++    # --- SVG --------------------------------------------------------------
++    def build_svg(
++        self,
++        width: float,
++        height: float,
++        dash_back: str | None = "5,6",
++        samples: int = 256,
++    ) -> str:
++        del samples  # La malla no tiene curvas; se acepta por compatibilidad.
++        w = _finite(width, 800.0)
++        h = _finite(height, 800.0)
++        s = min(w, h) * 0.3 * self.scale
++
++        faces = self._faces()
++        visible: list[tuple[float, list[Vector2]]] = []
++        for names in faces:
++            nx, ny, nz = self._face_normal(names)
++            normal_cam = self.q * Vector3(nx, ny, nz)
++            if normal_cam.z <= _FACING_EPS:
++                continue
++            points = [self._to_camera(_VERTICES[name]) for name in names]
++            mean_z = sum(p.z for p in points) / len(points)
++            visible.append((mean_z, [self._to_screen(p, s) for p in points]))
++        # Painter's algorithm: primero lo que esta mas lejos de camara.
++        visible.sort(key=lambda item: item[0])
++
++        plane_paths: list[str] = []
++        if self.show_planes:
++            for _, screen in visible:
++                if len(screen) < 3:
++                    continue
++                plane_paths.append(path_str([*screen, screen[0]]))
++
++        front_paths: list[str] = []
++        back_paths: list[str] = []
++        if self.show_edges:
++            for a, b in self._edges(faces):
++                segment: Poly3 = [
++                    self._to_camera(_VERTICES[a]),
++                    self._to_camera(_VERTICES[b]),
++                ]
++                front_segments, back_segments = split_front_back(segment)
++                for part in back_segments:
++                    back_paths.append(path_str([self._to_screen(p, s) for p in part]))
++                for part in front_segments:
++                    front_paths.append(path_str([self._to_screen(p, s) for p in part]))
++
++        plane_color = PLANE_COLOR if self.use_zone_colors else self.stroke_color
++        edge_color = EDGE_COLOR if self.use_zone_colors else self.stroke_color
++        dash_attr = f' stroke-dasharray="{dash_back}"' if dash_back else ""
++
++        svg: list[str] = ['<svg xmlns="http://www.w3.org/2000/svg">']
++        if plane_paths:
++            svg.append(
++                f'<g title="asaro-planes" fill="none" stroke="{plane_color}">'
++            )
++            svg.append(
++                f'<path d="{"".join(plane_paths)}" stroke-width="{self.front_line_stroke}" '
++                'stroke-linecap="round" stroke-linejoin="round"/>'
++            )
++            svg.append("</g>")
++        if back_paths or front_paths:
++            svg.append(
++                f'<g title="asaro-edges" fill="none" stroke="{edge_color}">'
++            )
++            if back_paths:
++                svg.append(
++                    f'<path d="{"".join(back_paths)}" stroke-width="{self.back_line_stroke}" '
++                    f'stroke-linecap="round" stroke-linejoin="round"{dash_attr} opacity="0.6"/>'
++                )
++            if front_paths:
++                svg.append(
++                    f'<path d="{"".join(front_paths)}" stroke-width="{self.front_line_stroke}" '
++                    'stroke-linecap="round" stroke-linejoin="round"/>'
++                )
++            svg.append("</g>")
++        svg.append("</svg>")
++        return "".join(svg)
+diff --git a/loomis_head/features_dialog.py b/loomis_head/features_dialog.py
+index 6ea02fb..d3c06be 100644
+--- a/loomis_head/features_dialog.py
++++ b/loomis_head/features_dialog.py
+@@ -1,15 +1,15 @@
+ # SPDX-FileCopyrightText: 2026 imboolean
+ # SPDX-License-Identifier: GPL-3.0-only
+ 
+-"""Panel de rasgos, caricatura y pelo del Loomis Head Guide.
++"""Paneles de rasgos, pelo y planos Asaro del Loomis Head Guide.
+ 
+-Se incrusta en el docker (no abre una ventana aparte) y trabaja sobre el modelo
+-activo. El contenedor con scroll es el panel principal.
++Se separan en widgets (rasgos, pelo y Asaro) para que el docker pueda mostrarlos
++en pestanas independientes. Todos trabajan sobre el modelo activo y comparten
++el callback de redibujo.
+ """
+ from __future__ import annotations
+ 
+-from PyQt5.QtCore import Qt
+-from PyQt5.QtWidgets import (
++from .qt_compat import (
+     QCheckBox,
+     QComboBox,
+     QFormLayout,
+@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import (
+     QSlider,
+     QVBoxLayout,
+     QWidget,
++    Qt,
++    activated_index,
+ )
+ 
+ from .i18n import t
+@@ -26,30 +28,116 @@ from .i18n import t
+ HEAD_TYPES = (
+     ("headtype.realistic", dict(cranium=1.0, jaw_taper=1.0, cheek=0.2, face_width=1.0,
+                                 jaw_drop=1.0, eye_line=0.50, nose_line=0.32, mouth_line=0.18,
+-                                eye_size=0.11, eye_gap=0.42)),
++                                eye_size=0.11, eye_gap=0.42,
++                                forehead_height=1.0, jaw_angle=0.30, cranium_width=1.0,
++                                cranium_height=1.0, cheekbone_height=0.50,
++                                chin_sharpness=0.0)),
+     ("headtype.semi", dict(cranium=1.05, jaw_taper=0.9, cheek=0.35, face_width=1.0,
+                            jaw_drop=0.95, eye_line=0.48, nose_line=0.31, mouth_line=0.17,
+-                           eye_size=0.12, eye_gap=0.43)),
++                           eye_size=0.12, eye_gap=0.43,
++                           forehead_height=1.0, jaw_angle=0.40, cranium_width=1.02,
++                           cranium_height=1.02, cheekbone_height=0.50,
++                           chin_sharpness=0.10)),
+     ("headtype.anime", dict(cranium=1.12, jaw_taper=0.7, cheek=0.5, face_width=0.97,
+                             jaw_drop=0.8, eye_line=0.46, nose_line=0.30, mouth_line=0.16,
+-                            eye_size=0.14, eye_gap=0.44)),
++                            eye_size=0.14, eye_gap=0.44,
++                            forehead_height=0.95, jaw_angle=0.25, cranium_width=1.08,
++                            cranium_height=1.05, cheekbone_height=0.55,
++                            chin_sharpness=0.60)),
+     ("headtype.chibi", dict(cranium=1.3, jaw_taper=0.55, cheek=0.7, face_width=0.92,
+                             jaw_drop=0.65, eye_line=0.42, nose_line=0.28, mouth_line=0.14,
+-                            eye_size=0.18, eye_gap=0.5)),
++                            eye_size=0.18, eye_gap=0.5,
++                            forehead_height=1.05, jaw_angle=0.15, cranium_width=1.15,
++                            cranium_height=1.12, cheekbone_height=0.60,
++                            chin_sharpness=0.0)),
+     ("headtype.caricature", dict(cranium=1.25, jaw_taper=0.6, cheek=0.8, face_width=0.95,
+                                  jaw_drop=0.75, eye_line=0.44, nose_line=0.29, mouth_line=0.15,
+-                                 eye_size=0.15, eye_gap=0.46)),
++                                 eye_size=0.15, eye_gap=0.46,
++                                 forehead_height=1.0, jaw_angle=0.50, cranium_width=1.10,
++                                 cranium_height=1.10, cheekbone_height=0.75,
++                                 chin_sharpness=0.20)),
+ )
+ 
+ 
+-class FeaturePanel(QWidget):
++# Presets de sexo: se aplican encima del estilo de cabeza. El indice es
++# head_sex (0 masculino, 1 femenino).
++SEX_PRESETS = (
++    dict(brow_ridge=0.80, eye_socket_depth=0.75, eye_socket_size=0.50,
++         cheek_fullness=0.35, cheek=0.55, jaw_angle=0.55,
++         chin_sharpness=0.20, forehead_height=0.95),
++    dict(brow_ridge=0.35, eye_socket_depth=0.45, eye_socket_size=0.60,
++         cheek_fullness=0.65, cheek=0.65, jaw_angle=0.25,
++         chin_sharpness=0.10, forehead_height=1.05),
++)
++
++
++class _ModelPanel(QWidget):
++    """Base para paneles que cambian de modelo (varias cabezas/documentos)."""
++
+     def __init__(self, model, on_change, parent=None):
+         super().__init__(parent)
+         self.model = model
+         self.on_change = on_change
+         self._syncing = False
+         self._sliders: list[tuple[QSlider, object]] = []
+-        self._flags: list[tuple[QCheckBox, object]] = []
++        self._form: QFormLayout | None = None
++
++    def set_model(self, model) -> None:
++        self.model = model
++        self.sync_from_model()
++
++    def _section(self, text: str) -> None:
++        if self._form is not None:
++            self._form.addRow(QLabel(f"<b>{text}</b>"))
++
++    def _slider(self, label, low, high, getter, setter) -> None:
++        slider = QSlider(Qt.Horizontal)
++        slider.setRange(low, high)
++        slider.setValue(int(round(getter())))
++        slider.valueChanged.connect(lambda value: self._apply(setter, value))
++        if self._form is not None:
++            self._form.addRow(label, slider)
++        self._sliders.append((slider, getter))
++
++    def _slider_field(self, label, low, high, attr, default, scale=100.0) -> None:
++        """Slider ligado a un campo del modelo que puede no existir todavia.
++
++        Getter y setter se resuelven en cada llamada sobre self.model, de modo
++        que cambiar de cabeza (set_model) escribe en el modelo activo y no en el
++        que existia al construir el panel. Si el generador aun no tiene el campo,
++        se usa `default` al leer y el setter se omite al escribir.
++        """
++
++        def getter():
++            return float(getattr(self.model, attr, default)) * scale
++
++        def setter(value):
++            fn = getattr(self.model, "set_" + attr, None)
++            if fn is not None:
++                fn(value / scale)
++
++        self._slider(label, low, high, getter, setter)
++
++    def _apply(self, setter, value) -> None:
++        if self._syncing:
++            return
++        setter(value)
++        self.on_change()
++
++    def sync_from_model(self) -> None:
++        self._syncing = True
++        for slider, getter in self._sliders:
++            slider.setValue(int(round(getter())))
++        self._syncing = False
++
++
++class FeaturePanel(_ModelPanel):
++    """Tipo de cabeza, caricatura, lineas de Loomis y rasgos dibujados."""
++
++    def __init__(self, model, on_change, parent=None):
++        super().__init__(model, on_change, parent)
++        self._flags: list[tuple[QCheckBox, str]] = []
++        self._flag_defaults: dict[str, bool] = {}
+ 
+         outer = QVBoxLayout(self)
+         outer.setContentsMargins(0, 0, 0, 0)
+@@ -63,9 +151,15 @@ class FeaturePanel(QWidget):
+         self.type_combo = QComboBox()
+         for key, _ in HEAD_TYPES:
+             self.type_combo.addItem(t(key))
+-        self.type_combo.activated[int].connect(self._apply_type)
++        activated_index(self.type_combo).connect(self._apply_type)
+         self._form.addRow(t("headtype.label"), self.type_combo)
+ 
++        self.sex_combo = QComboBox()
++        self.sex_combo.addItem(t("features.sex.male"))
++        self.sex_combo.addItem(t("features.sex.female"))
++        activated_index(self.sex_combo).connect(self._apply_sex)
++        self._form.addRow(t("features.sex"), self.sex_combo)
++
+         self._section(t("features.section.caricature"))
+         self._slider(t("features.cranium"), 60, 160, lambda: self.model.cranium * 100, lambda v: self.model.set_cranium(v / 100))
+         self._slider(t("features.jaw_taper"), 40, 160, lambda: self.model.jaw_taper * 100, lambda v: self.model.set_jaw_taper(v / 100))
+@@ -73,11 +167,29 @@ class FeaturePanel(QWidget):
+         self._slider(t("features.face_width"), 60, 140, lambda: self.model.face_width * 100, lambda v: self.model.set_face_width(v / 100))
+         self._slider(t("features.jaw_drop"), 60, 140, lambda: self.model.jaw_drop * 100, lambda v: self.model.set_jaw_drop(v / 100))
+ 
++        self._section(t("features.section.proportions"))
++        self._slider(t("features.forehead_height"), 60, 140, lambda: self.model.forehead_height * 100, lambda v: self.model.set_forehead_height(v / 100))
++        self._slider(t("features.jaw_angle"), 0, 100, lambda: self.model.jaw_angle * 100, lambda v: self.model.set_jaw_angle(v / 100))
++        self._slider(t("features.cranium_width"), 80, 120, lambda: self.model.cranium_width * 100, lambda v: self.model.set_cranium_width(v / 100))
++        self._slider(t("features.cranium_height"), 80, 120, lambda: self.model.cranium_height * 100, lambda v: self.model.set_cranium_height(v / 100))
++        self._slider(t("features.cheekbone_height"), 0, 100, lambda: self.model.cheekbone_height * 100, lambda v: self.model.set_cheekbone_height(v / 100))
++
++        self._section(t("features.section.style"))
++        self._slider(t("features.chin_sharpness"), 0, 100, lambda: self.model.chin_sharpness * 100, lambda v: self.model.set_chin_sharpness(v / 100))
++        self._add_flag_row(None, ((t("features.rhythm"), "show_rhythm"),))
++        self._slider(t("features.rhythm_strength"), 0, 100, lambda: self.model.rhythm_strength * 100, lambda v: self.model.set_rhythm_strength(v / 100))
++
+         self._section(t("features.section.lines"))
+         self._slider(t("features.brow_line"), 40, 80, lambda: self.model.brow_line * 100, lambda v: self.model.set_brow_line(v / 100))
+         self._slider(t("features.eye_line"), 35, 65, lambda: self.model.eye_line * 100, lambda v: self.model.set_eye_line(v / 100))
+         self._slider(t("features.nose_line"), 15, 45, lambda: self.model.nose_line * 100, lambda v: self.model.set_nose_line(v / 100))
+         self._slider(t("features.mouth_line"), 5, 30, lambda: self.model.mouth_line * 100, lambda v: self.model.set_mouth_line(v / 100))
++        self._add_flag_row(t("features.guides"), (
++            (t("features.guide_brow"), "show_brow_guide"),
++            (t("features.guide_eye"), "show_eye_guide"),
++            (t("features.guide_nose"), "show_nose_guide"),
++            (t("features.guide_mouth"), "show_mouth_guide"),
++        ))
+ 
+         self._section(t("features.section.features"))
+         self._slider(t("features.eye_gap"), 10, 90, lambda: self.model.eye_gap * 100, lambda v: self.model.set_eye_gap(v / 100))
+@@ -90,63 +202,55 @@ class FeaturePanel(QWidget):
+         self._slider(t("features.mouth_width"), 5, 60, lambda: self.model.mouth_width * 100, lambda v: self.model.set_mouth_width(v / 100))
+         self._slider(t("features.mouth_curve"), -15, 15, lambda: self.model.mouth_curve * 100, lambda v: self.model.set_mouth_curve(v / 100))
+ 
+-        flags = QWidget()
+-        flags_layout = QHBoxLayout(flags)
+-        flags_layout.setContentsMargins(0, 0, 0, 0)
+-        for text, getter, setter in (
+-            (t("features.eyes"), lambda: self.model.show_eyes, self.model.set_show_eyes),
+-            (t("features.brows"), lambda: self.model.show_brows, self.model.set_show_brows),
+-            (t("features.nose"), lambda: self.model.show_nose, self.model.set_show_nose),
+-            (t("features.ears"), lambda: self.model.show_ears, self.model.set_show_ears),
+-            (t("features.mouth"), lambda: self.model.show_mouth, self.model.set_show_mouth),
+-        ):
+-            checkbox = QCheckBox(text)
+-            checkbox.setChecked(bool(getter()))
+-            checkbox.toggled.connect(lambda checked, s=setter: self._apply(s, checked))
+-            flags_layout.addWidget(checkbox)
+-            self._flags.append((checkbox, getter))
+-        self._form.addRow(t("features.show"), flags)
+-
+-        self._section(t("hair.section"))
+-        self.hair_master = QCheckBox(t("hair.show"))
+-        self.hair_master.toggled.connect(self._set_hair)
+-        self._form.addRow(self.hair_master)
+-        self._slider(t("hair.line"), 55, 85, lambda: self.model.hair_line * 100, lambda v: self.model.set_hair_line(v / 100))
+-        self._slider(t("hair.arch"), 0, 20, lambda: self.model.hair_arch * 100, lambda v: self.model.set_hair_arch(v / 100))
+-        self._slider(t("hair.tilt"), -20, 20, lambda: self.model.hair_tilt * 100, lambda v: self.model.set_hair_tilt(v / 100))
+-        self._slider(t("hair.part_pos"), -100, 100, lambda: self.model.hair_part_pos * 100, lambda v: self.model.set_hair_part_pos(v / 100))
+-        self.hair_part_combo = QComboBox()
+-        for key in ("hair.straight", "hair.zigzag", "hair.spiky"):
+-            self.hair_part_combo.addItem(t(key))
+-        self.hair_part_combo.activated[int].connect(self._set_hair_part)
+-        self._form.addRow(t("hair.part"), self.hair_part_combo)
+-        self.hair_texture_combo = QComboBox()
+-        for key in ("hair.smooth", "hair.wavy", "hair.texture_spiky", "hair.curly"):
+-            self.hair_texture_combo.addItem(t(key))
+-        self.hair_texture_combo.activated[int].connect(self._set_hair_texture)
+-        self._form.addRow(t("hair.texture"), self.hair_texture_combo)
++        self._add_flag_row(t("features.show"), (
++            (t("features.eyes"), "show_eyes"),
++            (t("features.brows"), "show_brows"),
++            (t("features.nose"), "show_nose"),
++            (t("features.ears"), "show_ears"),
++            (t("features.mouth"), "show_mouth"),
++        ))
+ 
+-        self.sync_from_model()
++        self._section(t("features.section.eye"))
++        self._add_flag_row(None, (
++            (t("features.eye_socket"), "show_eye_socket"),
++        ), defaults={"show_eye_socket": True})
++        self._slider_field(t("features.eye_socket_depth"), 0, 100,
++                           "eye_socket_depth", 0.5)
++        self._slider_field(t("features.eye_socket_size"), 20, 90,
++                           "eye_socket_size", 0.55)
++        self._slider_field(t("features.brow_ridge"), 0, 100, "brow_ridge", 0.5)
++        self._slider_field(t("features.cheek_fullness"), 0, 100,
++                           "cheek_fullness", 0.5)
+ 
+-    def set_model(self, model) -> None:
+-        self.model = model
+         self.sync_from_model()
+ 
+-    def _section(self, text: str) -> None:
+-        self._form.addRow(QLabel(f"<b>{text}</b>"))
+-
+-    def _slider(self, label, low, high, getter, setter) -> None:
+-        slider = QSlider(Qt.Horizontal)
+-        slider.setRange(low, high)
+-        slider.setValue(int(round(getter())))
+-        slider.valueChanged.connect(lambda value: self._apply(setter, value))
+-        self._form.addRow(label, slider)
+-        self._sliders.append((slider, getter))
++    def _add_flag_row(self, label, items, defaults=None) -> None:
++        defaults = defaults or {}
++        box = QWidget()
++        layout = QHBoxLayout(box)
++        layout.setContentsMargins(0, 0, 0, 0)
++        for text, attr in items:
++            default = bool(defaults.get(attr, False))
++            self._flag_defaults[attr] = default
++            checkbox = QCheckBox(text)
++            checkbox.setChecked(bool(getattr(self.model, attr, default)))
++            # El setter se resuelve en tiempo de llamada: al cambiar de cabeza
++            # (set_model) los checkboxes deben escribir en el modelo activo,
++            # no en el que existia al construir el panel.
++            checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
++            layout.addWidget(checkbox)
++            self._flags.append((checkbox, attr))
++        if label is None:
++            self._form.addRow(box)
++        else:
++            self._form.addRow(label, box)
+ 
+-    def _apply(self, setter, value) -> None:
++    def _apply_flag(self, attr: str, checked: bool) -> None:
+         if self._syncing:
+             return
+-        setter(value)
++        setter = getattr(self.model, "set_" + attr, None)
++        if setter is not None:
++            setter(checked)
+         self.on_change()
+ 
+     def _set_master(self, checked: bool) -> None:
+@@ -155,49 +259,191 @@ class FeaturePanel(QWidget):
+         self.model.set_show_features(checked)
+         self.on_change()
+ 
+-    def _set_hair(self, checked: bool) -> None:
++    def _apply_type(self, index: int) -> None:
++        if not 0 <= index < len(HEAD_TYPES):
++            return
++        params = HEAD_TYPES[index][1]
++        # Si un preset no trae una clave, o el modelo no tiene su setter,
++        # se omite en vez de fallar: los presets y el modelo evolucionan aparte.
++        for key, value in params.items():
++            setter = getattr(self.model, "set_" + key, None)
++            if setter is not None:
++                setter(value)
++        # El estilo define la base; el sexo elegido se reaplica encima para que
++        # cambiar de tipo de cabeza no borre la eleccion.
++        self._apply_sex_preset(self.sex_combo.currentIndex())
++        self.on_change()
++        self.sync_from_model()
++
++    def _apply_sex(self, index: int) -> None:
++        if not 0 <= index < len(SEX_PRESETS):
++            return
++        self._apply_sex_preset(index)
++        self.on_change()
++        self.sync_from_model()
++
++    def _apply_sex_preset(self, index: int) -> None:
++        if not 0 <= index < len(SEX_PRESETS):
++            return
++        setter = getattr(self.model, "set_head_sex", None)
++        if setter is not None:
++            setter(index)
++        for key, value in SEX_PRESETS[index].items():
++            fn = getattr(self.model, "set_" + key, None)
++            if fn is not None:
++                fn(value)
++
++    def sync_from_model(self) -> None:
++        self._syncing = True
++        self.master.setChecked(bool(self.model.show_features))
++        self.type_combo.setCurrentIndex(self._type_index())
++        # Si el modelo aun no tiene head_sex se conserva la eleccion del combo.
++        sex = getattr(self.model, "head_sex", self.sex_combo.currentIndex())
++        try:
++            sex = int(sex)
++        except (TypeError, ValueError):
++            sex = self.sex_combo.currentIndex()
++        self.sex_combo.setCurrentIndex(max(0, min(sex, self.sex_combo.count() - 1)))
++        for slider, getter in self._sliders:
++            slider.setValue(int(round(getter())))
++        for checkbox, attr in self._flags:
++            default = self._flag_defaults.get(attr, False)
++            checkbox.setChecked(bool(getattr(self.model, attr, default)))
++        self._syncing = False
++
++    def _type_index(self) -> int:
++        # No hay un tipo "activo" guardado: se mantiene el que el usuario eligio.
++        return self.type_combo.currentIndex() if self.type_combo.count() else 0
++
++
++class HairPanel(_ModelPanel):
++    """Pelo parametrico: linea, arco, inclinacion, raya, patron y textura."""
++
++    def __init__(self, model, on_change, parent=None):
++        super().__init__(model, on_change, parent)
++
++        outer = QVBoxLayout(self)
++        outer.setContentsMargins(0, 0, 0, 0)
++        self.master = QCheckBox(t("hair.show"))
++        self.master.toggled.connect(self._set_master)
++        outer.addWidget(self.master)
++
++        self._form = QFormLayout()
++        outer.addLayout(self._form)
++
++        self._section(t("hair.section"))
++        self._slider(t("hair.line"), 55, 85, lambda: self.model.hair_line * 100, lambda v: self.model.set_hair_line(v / 100))
++        self._slider(t("hair.arch"), 0, 20, lambda: self.model.hair_arch * 100, lambda v: self.model.set_hair_arch(v / 100))
++        self._slider(t("hair.tilt"), -20, 20, lambda: self.model.hair_tilt * 100, lambda v: self.model.set_hair_tilt(v / 100))
++        self._slider(t("hair.part_pos"), -100, 100, lambda: self.model.hair_part_pos * 100, lambda v: self.model.set_hair_part_pos(v / 100))
++
++        self.part_combo = QComboBox()
++        for key in ("hair.straight", "hair.zigzag", "hair.spiky"):
++            self.part_combo.addItem(t(key))
++        activated_index(self.part_combo).connect(self._set_part)
++        self._form.addRow(t("hair.part"), self.part_combo)
++
++        self.texture_combo = QComboBox()
++        for key in ("hair.smooth", "hair.wavy", "hair.texture_spiky", "hair.curly"):
++            self.texture_combo.addItem(t(key))
++        activated_index(self.texture_combo).connect(self._set_texture)
++        self._form.addRow(t("hair.texture"), self.texture_combo)
++
++        self.sync_from_model()
++
++    def _set_master(self, checked: bool) -> None:
+         if self._syncing:
+             return
+         self.model.set_show_hair(checked)
+         self.on_change()
+ 
+-    def _set_hair_part(self, index: int) -> None:
++    def _set_part(self, index: int) -> None:
+         if self._syncing:
+             return
+         self.model.set_hair_part(index)
+         self.on_change()
+ 
+-    def _set_hair_texture(self, index: int) -> None:
++    def _set_texture(self, index: int) -> None:
+         if self._syncing:
+             return
+         self.model.set_hair_texture(index)
+         self.on_change()
+ 
+-    def _apply_type(self, index: int) -> None:
+-        if not 0 <= index < len(HEAD_TYPES):
++    def sync_from_model(self) -> None:
++        self._syncing = True
++        self.master.setChecked(bool(self.model.show_hair))
++        self.part_combo.setCurrentIndex(int(self.model.hair_part))
++        self.texture_combo.setCurrentIndex(int(self.model.hair_texture))
++        for slider, getter in self._sliders:
++            slider.setValue(int(round(getter())))
++        self._syncing = False
++
++
++class AsaroPanel(_ModelPanel):
++    """Planos, aristas y nivel de detalle de la cabeza Asaro."""
++
++    def __init__(self, model, on_change, parent=None):
++        super().__init__(model, on_change, parent)
++        self._flags: list[tuple[QCheckBox, str, bool]] = []
++
++        outer = QVBoxLayout(self)
++        outer.setContentsMargins(0, 0, 0, 0)
++
++        self._form = QFormLayout()
++        outer.addLayout(self._form)
++
++        self.planes_check = self._add_flag(t("asaro.show_planes"), "show_planes", True)
++        self.edges_check = self._add_flag(t("asaro.show_edges"), "show_edges", True)
++
++        self.detail_combo = QComboBox()
++        for key, level in (
++            ("asaro.detail.low", 0),
++            ("asaro.detail.medium", 1),
++            ("asaro.detail.high", 2),
++        ):
++            self.detail_combo.addItem(t(key), level)
++        activated_index(self.detail_combo).connect(self._apply_detail)
++        self._form.addRow(t("asaro.detail"), self.detail_combo)
++
++        self.sync_from_model()
++
++    def _add_flag(self, text: str, attr: str, default: bool) -> QCheckBox:
++        checkbox = QCheckBox(text)
++        checkbox.setChecked(bool(getattr(self.model, attr, default)))
++        # Setter en tiempo de llamada: al cambiar de modelo (set_model) el
++        # checkbox escribe en el modelo activo y no en el de construccion.
++        checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
++        self._form.addRow(checkbox)
++        self._flags.append((checkbox, attr, default))
++        return checkbox
++
++    def _apply_flag(self, attr: str, checked: bool) -> None:
++        if self._syncing:
+             return
+-        params = HEAD_TYPES[index][1]
+-        self.model.set_cranium(params["cranium"])
+-        self.model.set_jaw_taper(params["jaw_taper"])
+-        self.model.set_cheek(params["cheek"])
+-        self.model.set_face_width(params["face_width"])
+-        self.model.set_jaw_drop(params["jaw_drop"])
+-        self.model.set_eye_line(params["eye_line"])
+-        self.model.set_nose_line(params["nose_line"])
+-        self.model.set_mouth_line(params["mouth_line"])
+-        self.model.set_eye_size(params["eye_size"])
+-        self.model.set_eye_gap(params["eye_gap"])
++        setter = getattr(self.model, "set_" + attr, None)
++        if setter is not None:
++            setter(checked)
++        self.on_change()
++
++    def _apply_detail(self, index: int) -> None:
++        if self._syncing:
++            return
++        level = self.detail_combo.itemData(index)
++        if level is None:
++            level = index
++        setter = getattr(self.model, "set_detail", None)
++        if setter is not None:
++            setter(int(level))
+         self.on_change()
+-        self.sync_from_model()
+ 
+     def sync_from_model(self) -> None:
+         self._syncing = True
+-        self.master.setChecked(bool(self.model.show_features))
+-        self.hair_master.setChecked(bool(self.model.show_hair))
+-        self.hair_part_combo.setCurrentIndex(int(self.model.hair_part))
+-        self.hair_texture_combo.setCurrentIndex(int(self.model.hair_texture))
+-        for slider, getter in self._sliders:
+-            slider.setValue(int(round(getter())))
+-        for checkbox, getter in self._flags:
+-            checkbox.setChecked(bool(getter()))
++        for checkbox, attr, default in self._flags:
++            checkbox.setChecked(bool(getattr(self.model, attr, default)))
++        try:
++            detail = int(getattr(self.model, "detail", 1))
++        except (TypeError, ValueError):
++            detail = 1
++        index = self.detail_combo.findData(max(0, min(detail, 2)))
++        self.detail_combo.setCurrentIndex(index if index >= 0 else 1)
+         self._syncing = False
+diff --git a/loomis_head/heads/README.md b/loomis_head/heads/README.md
+index 4d2dc20..24c4d3e 100644
+--- a/loomis_head/heads/README.md
++++ b/loomis_head/heads/README.md
+@@ -1,8 +1,8 @@
+ # Cabezas para compartir
+ 
+-Cada archivo es una cabeza Loomis exportada desde el plugin (**Exportar cabeza…**). Se
+-puede cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC
+-del Grimorio de Color.
++Cada archivo es una cabeza exportada desde el plugin (**Exportar cabeza…**). Se puede
++cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC del
++Grimorio de Color.
+ 
+ ## Formato
+ 
+@@ -19,10 +19,15 @@ del Grimorio de Color.
+ }
+ ```
+ 
+-- `model`: solo `loomis` en esta versión. Los modelos futuros (Reilly, Asaro, anime) usarán
+-  el mismo envoltorio y el cargador avisará si no los entiende.
+-- `head`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
+-  caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
++- `model`: `loomis` o `asaro`. El cargador resuelve el modelo con el registro de
++  `loomis_head/models.py` (`create_model`); si no lo entiende, avisa y no carga la cabeza.
++- `head`: el bloque completo del generador que corresponda al `model`.
++  - `loomis`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
++    caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
++  - `asaro`: escala, posición, rotación, trazos y color, más `showPlanes` (contornos de
++    planos), `showEdges` (aristas de pliegue y silueta) y `detail` (0 grueso, 1 estándar,
++    2 fino). Los campos de Loomis viajan igual para no romper la interfaz, pero en Asaro
++    no cambian la malla.
+ - `author`, `license` y `tags` son libres; sirven para acreditar y filtrar.
+ 
+ ## Convención sugerida
+@@ -32,6 +37,7 @@ heads/
+ ├── README.md
+ ├── example-head.json
+ ├── example-head.png     (preview 400x400)
++├── example-asaro.json
+ └── <autor>/<nombre>.json
+ ```
+ 
+diff --git a/loomis_head/heads/example-asaro.json b/loomis_head/heads/example-asaro.json
+new file mode 100644
+index 0000000..822ed94
+--- /dev/null
++++ b/loomis_head/heads/example-asaro.json
+@@ -0,0 +1,42 @@
++{
++  "format": "loomis-head",
++  "version": 1,
++  "model": "asaro",
++  "name": "Asaro planos",
++  "author": "imboolean",
++  "license": "CC0-1.0",
++  "tags": [
++    "asaro",
++    "planos",
++    "base"
++  ],
++  "head": {
++    "version": 1,
++    "generator": "asaro",
++    "model": "asaro",
++    "scale": 1.0,
++    "positionX": 0.0,
++    "positionY": 0.0,
++    "rotation": [
++      1.0,
++      0.0,
++      0.0,
++      0.0
++    ],
++    "showPlanes": true,
++    "showEdges": true,
++    "detail": 1,
++    "frontStroke": 10.0,
++    "backStroke": 7.0,
++    "strokeColor": "#6A54E7",
++    "useZoneColors": false,
++    "sideCut": 0.66,
++    "faceAge": 1.0,
++    "chinWidth": 1.0,
++    "showFace": true,
++    "showArrow": true,
++    "showSilhouette": true,
++    "showSideRims": true,
++    "showSideCross": true
++  }
++}
+diff --git a/loomis_head/heads/example-head.json b/loomis_head/heads/example-head.json
+index 9d6e19b..b71d004 100644
+--- a/loomis_head/heads/example-head.json
++++ b/loomis_head/heads/example-head.json
+@@ -30,6 +30,20 @@
+     "cheek": 0.0,
+     "faceWidth": 1.0,
+     "jawDrop": 1.0,
++    "foreheadHeight": 1.0,
++    "jawAngle": 0.0,
++    "craniumWidth": 1.0,
++    "craniumHeight": 1.0,
++    "cheekboneHeight": 0.5,
++    "chinSharpness": 0.0,
++    "headSex": 0,
++    "browRidge": 0.5,
++    "eyeSocketDepth": 0.5,
++    "eyeSocketSize": 0.55,
++    "showEyeSocket": true,
++    "cheekFullness": 0.5,
++    "showRhythm": false,
++    "rhythmStrength": 0.6,
+     "showFeatures": true,
+     "showHair": false,
+     "hairLine": 0.68,
+@@ -54,6 +68,10 @@
+     "showMouth": true,
+     "showBrows": true,
+     "showFace": true,
++    "showBrowGuide": true,
++    "showEyeGuide": true,
++    "showNoseGuide": true,
++    "showMouthGuide": true,
+     "showArrow": true,
+     "showSilhouette": true,
+     "showSideRims": true,
+diff --git a/loomis_head/i18n.py b/loomis_head/i18n.py
+index 5676c5a..21b5cec 100644
+--- a/loomis_head/i18n.py
++++ b/loomis_head/i18n.py
+@@ -9,7 +9,7 @@ import os
+ from pathlib import Path
+ 
+ try:
+-    from PyQt5.QtCore import QLocale
++    from .qt_compat import QLocale
+ except ImportError:  # pruebas fuera de Krita
+     QLocale = None
+ 
+diff --git a/loomis_head/loomis_head_generator.py b/loomis_head/loomis_head_generator.py
+index e9cd7df..ae4b436 100644
+--- a/loomis_head/loomis_head_generator.py
++++ b/loomis_head/loomis_head_generator.py
+@@ -18,6 +18,7 @@ ZONE_COLORS = {
+     "cranium": "#6A54E7",
+     "jaw": "#E76A54",
+     "cheek": "#54C4E7",
++    "rhythm": "#D96A8A",
+     "features": "#E7C454",
+     "hair": "#B07A52",
+     "side": "#8A8A9A",
+@@ -54,6 +55,22 @@ class LoomisHead3D:
+         self.cheek: float = 0.0
+         self.face_width: float = 1.0
+         self.jaw_drop: float = 1.0
++        # Proporciones (0.6.0): frente, mandibula, craneo, pomulo y menton.
++        self.forehead_height: float = 1.0
++        self.jaw_angle: float = 0.0
++        self.cranium_width: float = 1.0
++        self.cranium_height: float = 1.0
++        self.cheekbone_height: float = 0.5
++        self.chin_sharpness: float = 0.0
++        # Sexo y construccion de cuenca orbitaria, ceja y mejillas (0.6.1).
++        self.head_sex: int = 0
++        self.brow_ridge: float = 0.5
++        self.eye_socket_depth: float = 0.5
++        self.eye_socket_size: float = 0.55
++        self.show_eye_socket: bool = True
++        self.cheek_fullness: float = 0.5
++        self.show_rhythm: bool = False
++        self.rhythm_strength: float = 0.6
+         # Rasgos faciales (lineas de Loomis, cuencas, nariz, orejas, boca, cejas).
+         self.show_features: bool = False
+         self.show_hair: bool = False
+@@ -83,6 +100,11 @@ class LoomisHead3D:
+         self.show_mouth: bool = True
+         self.show_brows: bool = True
+         self.show_face: bool = True
++        # Lineas de guia independientes (0.6.0); show_features sigue apagando todas.
++        self.show_brow_guide: bool = True
++        self.show_eye_guide: bool = True
++        self.show_nose_guide: bool = True
++        self.show_mouth_guide: bool = True
+         self.front_line_stroke: float = 10.0
+         self.back_line_stroke: float = 7.0
+         self.show_arrow: bool = True
+@@ -128,6 +150,48 @@ class LoomisHead3D:
+     def set_jaw_drop(self, value: float) -> None:
+         self.jaw_drop = max(0.6, min(1.4, float(value)))
+ 
++    def set_forehead_height(self, value: float) -> None:
++        self.forehead_height = max(0.6, min(1.4, float(value)))
++
++    def set_jaw_angle(self, value: float) -> None:
++        self.jaw_angle = self._clamp01(value)
++
++    def set_cranium_width(self, value: float) -> None:
++        self.cranium_width = max(0.8, min(1.2, float(value)))
++
++    def set_cranium_height(self, value: float) -> None:
++        self.cranium_height = max(0.8, min(1.2, float(value)))
++
++    def set_cheekbone_height(self, value: float) -> None:
++        self.cheekbone_height = self._clamp01(value)
++
++    def set_chin_sharpness(self, value: float) -> None:
++        self.chin_sharpness = self._clamp01(value)
++
++    def set_head_sex(self, value: int) -> None:
++        self.head_sex = max(0, min(1, int(value)))
++
++    def set_brow_ridge(self, value: float) -> None:
++        self.brow_ridge = self._clamp01(value)
++
++    def set_eye_socket_depth(self, value: float) -> None:
++        self.eye_socket_depth = self._clamp01(value)
++
++    def set_eye_socket_size(self, value: float) -> None:
++        self.eye_socket_size = max(0.2, min(0.9, float(value)))
++
++    def set_show_eye_socket(self, enable: bool) -> None:
++        self.show_eye_socket = bool(enable)
++
++    def set_cheek_fullness(self, value: float) -> None:
++        self.cheek_fullness = self._clamp01(value)
++
++    def set_show_rhythm(self, enable: bool) -> None:
++        self.show_rhythm = bool(enable)
++
++    def set_rhythm_strength(self, value: float) -> None:
++        self.rhythm_strength = self._clamp01(value)
++
+     def set_show_features(self, enable: bool) -> None:
+         self.show_features = bool(enable)
+ 
+@@ -215,6 +279,18 @@ class LoomisHead3D:
+     def set_show_face(self, enable: bool) -> None:
+         self.show_face = bool(enable)
+ 
++    def set_show_brow_guide(self, enable: bool) -> None:
++        self.show_brow_guide = bool(enable)
++
++    def set_show_eye_guide(self, enable: bool) -> None:
++        self.show_eye_guide = bool(enable)
++
++    def set_show_nose_guide(self, enable: bool) -> None:
++        self.show_nose_guide = bool(enable)
++
++    def set_show_mouth_guide(self, enable: bool) -> None:
++        self.show_mouth_guide = bool(enable)
++
+     def set_front_line_stroke(self, front_line_stroke: float) -> None:
+         self.front_line_stroke = max(0.5, min(60.0, float(front_line_stroke)))
+ 
+@@ -236,6 +312,11 @@ class LoomisHead3D:
+     def set_stroke_color(self, color: str) -> None:
+         self.stroke_color = color
+ 
++    def _effective_hair_line(self) -> float:
++        """Linea de nacimiento del pelo ya escalada por forehead_height."""
++        line = self.brow_line + (self.hair_line - self.brow_line) * self.forehead_height
++        return max(0.55, min(0.85, line))
++
+     def to_dict(self) -> dict:
+         """Estado completo del cabezal, listo para un preset."""
+         return {
+@@ -254,6 +335,20 @@ class LoomisHead3D:
+             "cheek": self.cheek,
+             "faceWidth": self.face_width,
+             "jawDrop": self.jaw_drop,
++            "foreheadHeight": self.forehead_height,
++            "jawAngle": self.jaw_angle,
++            "craniumWidth": self.cranium_width,
++            "craniumHeight": self.cranium_height,
++            "cheekboneHeight": self.cheekbone_height,
++            "chinSharpness": self.chin_sharpness,
++            "headSex": self.head_sex,
++            "browRidge": self.brow_ridge,
++            "eyeSocketDepth": self.eye_socket_depth,
++            "eyeSocketSize": self.eye_socket_size,
++            "showEyeSocket": self.show_eye_socket,
++            "cheekFullness": self.cheek_fullness,
++            "showRhythm": self.show_rhythm,
++            "rhythmStrength": self.rhythm_strength,
+             "showFeatures": self.show_features,
+             "showHair": self.show_hair,
+             "hairLine": self.hair_line,
+@@ -282,6 +377,10 @@ class LoomisHead3D:
+             "showMouth": self.show_mouth,
+             "showBrows": self.show_brows,
+             "showFace": self.show_face,
++            "showBrowGuide": self.show_brow_guide,
++            "showEyeGuide": self.show_eye_guide,
++            "showNoseGuide": self.show_nose_guide,
++            "showMouthGuide": self.show_mouth_guide,
+             "showArrow": self.show_arrow,
+             "showSilhouette": self.show_silhouette,
+             "showSideRims": self.show_side_rims,
+@@ -323,6 +422,20 @@ class LoomisHead3D:
+         self.set_cheek(num("cheek", self.cheek))
+         self.set_face_width(num("faceWidth", self.face_width))
+         self.set_jaw_drop(num("jawDrop", self.jaw_drop))
++        self.set_forehead_height(num("foreheadHeight", self.forehead_height))
++        self.set_jaw_angle(num("jawAngle", self.jaw_angle))
++        self.set_cranium_width(num("craniumWidth", self.cranium_width))
++        self.set_cranium_height(num("craniumHeight", self.cranium_height))
++        self.set_cheekbone_height(num("cheekboneHeight", self.cheekbone_height))
++        self.set_chin_sharpness(num("chinSharpness", self.chin_sharpness))
++        self.set_head_sex(int(num("headSex", self.head_sex)))
++        self.set_brow_ridge(num("browRidge", self.brow_ridge))
++        self.set_eye_socket_depth(num("eyeSocketDepth", self.eye_socket_depth))
++        self.set_eye_socket_size(num("eyeSocketSize", self.eye_socket_size))
++        self.set_show_eye_socket(flag("showEyeSocket", self.show_eye_socket))
++        self.set_cheek_fullness(num("cheekFullness", self.cheek_fullness))
++        self.set_show_rhythm(flag("showRhythm", self.show_rhythm))
++        self.set_rhythm_strength(num("rhythmStrength", self.rhythm_strength))
+         self.set_show_features(flag("showFeatures", self.show_features))
+         self.set_show_hair(flag("showHair", self.show_hair))
+         self.set_hair_line(num("hairLine", self.hair_line))
+@@ -351,6 +464,10 @@ class LoomisHead3D:
+         self.set_show_mouth(flag("showMouth", self.show_mouth))
+         self.set_show_brows(flag("showBrows", self.show_brows))
+         self.set_show_face(flag("showFace", self.show_face))
++        self.set_show_brow_guide(flag("showBrowGuide", self.show_brow_guide))
++        self.set_show_eye_guide(flag("showEyeGuide", self.show_eye_guide))
++        self.set_show_nose_guide(flag("showNoseGuide", self.show_nose_guide))
++        self.set_show_mouth_guide(flag("showMouthGuide", self.show_mouth_guide))
+         self.set_arrow(flag("showArrow", self.show_arrow))
+         self.set_silhouette(flag("showSilhouette", self.show_silhouette))
+         self.set_side_rims(flag("showSideRims", self.show_side_rims))
+@@ -390,9 +507,12 @@ class LoomisHead3D:
+ 
+     def _to_camera(self, pts: Sequence[Vector3]) -> Poly3:
+         q = self.q
++        # Craneo eliptico aproximado: escala anisotropa en espacio de cabeza.
++        sx = self.cranium_width
++        sy = self.cranium_height
+         out: Poly3 = []
+         for p in pts:
+-            pv = q * p
++            pv = q * Vector3(p.x * sx, p.y * sy, p.z)
+             out.append(pv)
+         return out
+ 
+@@ -438,6 +558,111 @@ class LoomisHead3D:
+             out.append(p0 * (u * u) + p1 * (2.0 * u * v) + p2 * (v * v))
+         return out
+ 
++    def _catmull_rom(self, points: Sequence[Vector3], steps_per_segment: int = 24) -> Poly3:
++        """Polilinea suave Catmull-Rom que pasa por todos los puntos dados."""
++        if not points:
++            return []
++        if len(points) == 1:
++            return [Vector3(points[0].x, points[0].y, points[0].z)]
++        padded = [points[0], *points, points[-1]]
++        out: Poly3 = []
++        for i in range(len(padded) - 3):
++            p0, p1, p2, p3 = padded[i], padded[i + 1], padded[i + 2], padded[i + 3]
++            for s in range(steps_per_segment):
++                t = s / float(steps_per_segment)
++                t2 = t * t
++                t3 = t2 * t
++                out.append(Vector3(
++                    0.5 * (2.0 * p1.x + (-p0.x + p2.x) * t
++                           + (2.0 * p0.x - 5.0 * p1.x + 4.0 * p2.x - p3.x) * t2
++                           + (-p0.x + 3.0 * p1.x - 3.0 * p2.x + p3.x) * t3),
++                    0.5 * (2.0 * p1.y + (-p0.y + p2.y) * t
++                           + (2.0 * p0.y - 5.0 * p1.y + 4.0 * p2.y - p3.y) * t2
++                           + (-p0.y + 3.0 * p1.y - 3.0 * p2.y + p3.y) * t3),
++                    0.5 * (2.0 * p1.z + (-p0.z + p2.z) * t
++                           + (2.0 * p0.z - 5.0 * p1.z + 4.0 * p2.z - p3.z) * t2
++                           + (-p0.z + 3.0 * p1.z - 3.0 * p2.z + p3.z) * t3),
++                ))
++        last = points[-1]
++        out.append(Vector3(last.x, last.y, last.z))
++        return out
++
++    def _rhythm_curves(
++        self,
++        rc: float,
++        jaw_front_endpoints: dict[float, Vector3] | None = None,
++        chin_midpoint: Vector3 | None = None,
++    ) -> list[Poly3]:
++        """Curvas de ritmo de Reilly sobre la esfera del craneo.
++
++        Perfil central corona -> ceja -> nariz -> boca -> menton, dos arcos
++        laterales corona -> pomulo -> mandibula y el flujo de pelo. La
++        intensidad `rhythm_strength` escala el desplazamiento lateral de los
++        arcos y la curvatura del menton.
++        """
++        strength = max(0.0, min(1.0, self.rhythm_strength))
++
++        def surf(x: float, y: float) -> Vector3:
++            return Vector3(x, y, math.sqrt(max(rc * rc - x * x - y * y, EPS)))
++
++        brow_y = (self.brow_line - 0.5) * 2.0 * rc
++        nose_y = (self.nose_line - 0.5) * 2.0 * rc - self.nose_length * rc
++        mouth_y = (self.mouth_line - 0.5) * 2.0 * rc
++
++        crown = Vector3(0.0, rc, 0.0)
++        brow = surf(0.0, brow_y)
++        nose = surf(0.0, nose_y)
++        mouth = surf(0.0, mouth_y)
++        if chin_midpoint is None:
++            chin_midpoint = Vector3(0.0, -1.22 * rc, rc)
++
++        curves: list[Poly3] = []
++        # Perfil central: pasa por ceja, nariz y boca pegandose a la esfera.
++        profile = self._catmull_rom([crown, brow, nose, mouth], 24)
++        for point in profile:
++            y = max(point.y, mouth_y)
++            point.y = y
++            point.z = math.sqrt(max(rc * rc - point.x * point.x - y * y, EPS))
++        # Del labio al menton la curva sale de la esfera: Bezier encadenada.
++        chin_bow = 0.12 * rc * (0.35 + 0.65 * strength)
++        chin_control = Vector3(
++            0.0,
++            (mouth.y + chin_midpoint.y) * 0.5,
++            (mouth.z + chin_midpoint.z) * 0.5 + chin_bow,
++        )
++        profile.extend(self._quadratic(mouth, chin_control, chin_midpoint, 24)[1:])
++        curves.append(profile)
++
++        # Arcos laterales: corona -> pomulo -> mandibula.
++        if jaw_front_endpoints is None:
++            jaw_front_endpoints = {
++                -1.0: Vector3(-0.55 * rc, -1.49 * rc, rc),
++                1.0: Vector3(0.55 * rc, -1.49 * rc, rc),
++            }
++        for side in (-1.0, 1.0):
++            crown_side = surf(side * (0.06 + 0.14 * strength) * rc, 0.96 * rc)
++            cheek = surf(side * (0.38 + 0.22 * strength) * rc, brow_y - 0.18 * rc)
++            jaw_end = jaw_front_endpoints[side]
++            arc = self._catmull_rom([crown_side, cheek, jaw_end], 24)
++            for point in arc:
++                if point.y >= cheek.y:
++                    point.z = math.sqrt(
++                        max(rc * rc - point.x * point.x - point.y * point.y, EPS)
++                    )
++            curves.append(arc)
++
++        # Flujo de pelo: corona hacia la raya.
++        flow_start_y = (self._effective_hair_line() - 0.5) * 2.0 * rc
++        flow_end_x = self.hair_part_pos * rc
++        flow: Poly3 = []
++        for i in range(33):
++            t = i / 32.0
++            y = rc * (1.0 - t) + flow_start_y * t
++            x = flow_end_x * (t * t) + strength * 0.18 * rc * math.sin(math.pi * t)
++            flow.append(surf(x, y))
++        curves.append(flow)
++        return curves
++
+     def build_svg(self, width: float, height: float, dash_back: str | None = "5,6", samples: int = 256) -> str:
+         r = self.radius
+         rc = r * self.cranium
+@@ -463,7 +688,15 @@ class LoomisHead3D:
+         # Lineas clasicas de Loomis: ceja, ojos, nariz y boca.
+         feature_curves: list[Poly3] = []
+         if self.show_features:
+-            for frac in (self.brow_line, self.eye_line, self.nose_line, self.mouth_line):
++            guides = (
++                (self.show_brow_guide, self.brow_line),
++                (self.show_eye_guide, self.eye_line),
++                (self.show_nose_guide, self.nose_line),
++                (self.show_mouth_guide, self.mouth_line),
++            )
++            for enabled, frac in guides:
++                if not enabled:
++                    continue
+                 y = (frac - 0.5) * 2.0 * rc
+                 radius = math.sqrt(max(rc * rc - y * y, EPS))
+                 circle = self._circle_on_plane(ny, [0.0, y, 0.0], radius, samples)
+@@ -493,15 +726,18 @@ class LoomisHead3D:
+         jaw_front_endpoints: dict[float, Vector3] = {}
+         age = self.face_age
+         jaw_length = max(0.02, 0.8 * (1.22 * r - rim_r) * (0.65 + 0.35 * age) * self.jaw_drop)
+-        jaw_angle = math.radians(10.0)
++        jaw_spread_angle = math.radians(10.0)
+         front_extension_length = r
+         front_down_angle = math.radians(12.0 + 8.0 * age)
+         front_inward_angle = math.radians(15.0)
+         taper = max(0.2, min(1.0, 0.9 * self.jaw_taper))
++        # jaw_angle: 0 = curva actual, 1 = esquina marcada (control en el vertice).
++        corner = taper + (1.0 - taper) * self.jaw_angle
++        chin = self.chin_sharpness
+         for side in (-1.0, 1.0):
+             p0 = Vector3(side * d, -rim_r, 0.0)
+             p1 = Vector3(
+-                (side * d - side * jaw_length * math.tan(jaw_angle)) * self.face_width,
++                (side * d - side * jaw_length * math.tan(jaw_spread_angle)) * self.face_width,
+                 -rim_r - jaw_length,
+                 0.0,
+             )
+@@ -510,8 +746,11 @@ class LoomisHead3D:
+                 p1.y - front_extension_length * math.tan(front_down_angle),
+                 p1.z + front_extension_length,
+             )
+-            c1 = p0 + (p1 - p0) * taper
+-            c2 = p2 - (p2 - p1) * taper
++            if chin > 0.0:
++                # Los dos extremos del menton convergen al centro y bajan.
++                p2 = Vector3(p2.x * (1.0 - chin), p2.y - chin * 0.10 * rc, p2.z)
++            c1 = p0 + (p1 - p0) * corner
++            c2 = p2 - (p2 - p1) * corner
+             curve: Poly3 = []
+             for i in range(65):
+                 t = i / 64.0
+@@ -535,8 +774,10 @@ class LoomisHead3D:
+ 
+         # Cheekbone guides con pómulo ajustable.
+         cheekbone_curves: list[Poly3] = []
++        cheek_offset_y = (self.cheekbone_height - 0.5) * 0.8 * rim_r
++        cheek_rim_z = math.sqrt(max(rim_r * rim_r - cheek_offset_y * cheek_offset_y, EPS))
+         for side in (-1.0, 1.0):
+-            cheek_rim_touch = Vector3(side * d, 0.0, rim_r)
++            cheek_rim_touch = Vector3(side * d, cheek_offset_y, cheek_rim_z)
+             cheek_end = jaw_front_endpoints[side]
+             dx = cheek_end.x - cheek_rim_touch.x
+             dy = cheek_end.y - cheek_rim_touch.y
+@@ -562,6 +803,11 @@ class LoomisHead3D:
+                     u*u*u*cheek_rim_touch.z + 3*u*u*t*cheek_c1.z + 3*u*t*t*cheek_c2.z + t*t*t*cheek_end.z,
+                 ))
+             cheekbone_curves.append(cheek_curve)
++            # Relleno de mejilla: arco cigomatico -> vertice de mandibula.
++            fill_mid = (cheek_rim_touch + cheek_end) * 0.5 + Vector3(0.0, -0.06 * rc, 0.0)
++            fill_bow = side * self.cheek_fullness * 0.10 * r
++            fill_control = fill_mid + Vector3(fill_bow, 0.0, 0.0)
++            cheekbone_curves.append(self._quadratic(cheek_rim_touch, fill_control, cheek_end))
+ 
+         # Rasgos faciales opcionales.
+         feature_front: list[Poly3] = []
+@@ -588,6 +834,50 @@ class LoomisHead3D:
+                         for point in circle
+                     ])
+ 
++            if self.show_eye_socket:
++                # Cuenca orbitaria: rim exterior + fondo hundido + ticks de profundidad.
++                depth = self.eye_socket_depth
++                socket_size = self.eye_socket_size
++                for side in (-1.0, 1.0):
++                    c = surf(side * eye_gap * 0.5, eye_y)
++                    rx = eye_size * (1.55 + 0.45 * self.brow_ridge)
++                    ry = eye_size * (1.20 + 0.30 * self.brow_ridge)
++                    rim = self._circle_on_plane(n_view, [c.x, c.y, c.z], 1.0, 48)
++                    feature_front.append([
++                        Vector3(c.x + (point.x - c.x) * rx,
++                                c.y + (point.y - c.y) * ry,
++                                point.z)
++                        for point in rim
++                    ])
++                    inner_c = c + Vector3(
++                        -side * eye_size * 0.28 * depth,
++                        -eye_size * 0.18 * depth,
++                        0.0,
++                    )
++                    rx2 = eye_size * (0.85 + 0.20 * socket_size)
++                    ry2 = eye_size * (0.65 + 0.20 * socket_size)
++                    bowl = self._circle_on_plane(
++                        n_view, [inner_c.x, inner_c.y, inner_c.z], 1.0, 48
++                    )
++                    feature_front.append([
++                        Vector3(inner_c.x + (point.x - inner_c.x) * rx2,
++                                inner_c.y + (point.y - inner_c.y) * ry2,
++                                point.z)
++                        for point in bowl
++                    ])
++                    tick = eye_size * 0.20 * depth
++                    if tick > EPS:
++                        for sign in (1.0, -1.0):
++                            rim_edge = Vector3(c.x, c.y + sign * ry, c.z)
++                            bowl_edge = Vector3(inner_c.x, inner_c.y + sign * ry2, inner_c.z)
++                            direction = bowl_edge - rim_edge
++                            length = direction.magnitude()
++                            if length > EPS:
++                                feature_front.append([
++                                    rim_edge,
++                                    rim_edge + direction * (tick / length),
++                                ])
++
+             if self.show_brows:
+                 brow_w = eye_size * 2.2
+                 for side in (-1.0, 1.0):
+@@ -596,6 +886,19 @@ class LoomisHead3D:
+                     p1b = surf(cx, brow_y + self.brow_height * rc)
+                     p2b = surf(cx + brow_w * 0.5, brow_y)
+                     feature_front.append(self._quadratic(p0b, p1b, p2b))
++                    # Cresta superciliar por encima de la ceja.
++                    ridge_y = brow_y + (self.brow_height + 0.05 * self.brow_ridge) * rc
++                    r0 = surf(cx - brow_w * 0.5, ridge_y)
++                    r1 = surf(cx, ridge_y + 0.01 * rc)
++                    r2 = surf(cx + brow_w * 0.5, ridge_y)
++                    feature_front.append(self._quadratic(r0, r1, r2))
++                    ridge_tick = 0.02 * rc * self.brow_ridge
++                    if ridge_tick > EPS:
++                        apex = surf(cx, brow_y + self.brow_height * rc)
++                        feature_front.append([
++                            apex,
++                            Vector3(apex.x, apex.y + ridge_tick, apex.z),
++                        ])
+ 
+             if self.show_nose:
+                 nose_w = max(0.02, self.nose_width) * rc
+@@ -622,7 +925,7 @@ class LoomisHead3D:
+ 
+         hair_curves: list[Poly3] = []
+         if self.show_hair:
+-            hy = (self.hair_line - 0.5) * 2.0 * rc
++            hy = (self._effective_hair_line() - 0.5) * 2.0 * rc
+             hairline: Poly3 = []
+             for i in range(65):
+                 t = -1.0 + 2.0 * i / 64.0
+@@ -671,12 +974,20 @@ class LoomisHead3D:
+                         side_part.append(point)
+                     hair_curves.append(side_part)
+ 
++        # Curvas de ritmo de Reilly (perfil central, arcos laterales y flujo de pelo).
++        rhythm_curves: list[Poly3] = []
++        if self.show_rhythm:
++            rhythm_curves = self._rhythm_curves(rc, jaw_front_endpoints, chin_midpoint)
++
+         groups_front: dict[str, list[str]] = {key: [] for key in ZONE_COLORS if key != "arrow"}
+         groups_back: dict[str, list[str]] = {key: [] for key in ZONE_COLORS if key != "arrow"}
+ 
+         for c in curves:
+             self._emit_segments(clip_to_side_band(c, d), width, height,
+                                 groups_front["cranium"], groups_back["cranium"])
++        for c in rhythm_curves:
++            self._emit_segments(clip_to_side_band(c, d), width, height,
++                                groups_front["rhythm"], groups_back["rhythm"])
+         for c in feature_curves:
+             self._emit_segments(clip_to_side_band(c, d), width, height,
+                                 groups_front["features"], groups_back["features"])
+@@ -736,7 +1047,7 @@ class LoomisHead3D:
+                 )
+ 
+         dash_attr = f' stroke-dasharray="{dash_back}"' if dash_back else ""
+-        order = ("cranium", "jaw", "cheek", "features", "hair", "side")
++        order = ("cranium", "jaw", "cheek", "rhythm", "features", "hair", "side")
+         svg: list[str] = ['<svg xmlns="http://www.w3.org/2000/svg">']
+         if self.use_zone_colors:
+             svg.append('<g title="head" fill="none">')
+diff --git a/loomis_head/loomis_head_plugin.py b/loomis_head/loomis_head_plugin.py
+index d65e2af..e5b2987 100644
+--- a/loomis_head/loomis_head_plugin.py
++++ b/loomis_head/loomis_head_plugin.py
+@@ -3,32 +3,47 @@
+ # SPDX-FileCopyrightText: 2026 imboolean
+ # SPDX-License-Identifier: GPL-3.0-only
+ 
++import copy
+ import json
+ import math
+ import os
+ from pathlib import Path
+ 
+ from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Extension, Krita
+-from PyQt5 import uic
+-from PyQt5.QtCore import QDateTime, QSignalBlocker, QStandardPaths, QTimer, Qt
+-from PyQt5.QtGui import QColor
+-from PyQt5.QtWidgets import (
++from .qt_compat import (
++    EXPANDING,
++    QColor,
+     QColorDialog,
+     QComboBox,
++    QDateTime,
+     QFileDialog,
+     QFormLayout,
++    QFrame,
++    QGridLayout,
+     QGroupBox,
+     QHBoxLayout,
+     QLabel,
++    QScrollArea,
++    QSignalBlocker,
+     QSlider,
++    QStackedWidget,
++    QStandardPaths,
++    QTabWidget,
++    QTimer,
+     QVBoxLayout,
+     QWidget,
++    Qt,
++    activated_index,
++    activated_text,
++    exec_dialog,
++    uic,
+ )
+ 
+ from . import i18n
+-from .features_dialog import FeaturePanel
++from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
+ from .preview import HeadPreviewWidget
+ from .i18n import t
++from .models import DEFAULT_MODEL, create_model, supported_models
+ from .linalg import (
+     angles_from_quaternion,
+     q_axis_angle,
+@@ -42,13 +57,16 @@ from .loomis_head_generator import LoomisHead3D
+ class Guide:
+     """Una cabeza independiente: modelo + capa vectorial + nombre."""
+ 
+-    __slots__ = ("model", "layer", "name", "last_center")
++    __slots__ = ("model", "layer", "name", "last_center", "model_states")
+ 
+     def __init__(self, model, layer, name):
+         self.model = model
+         self.layer = layer
+         self.name = name
+         self.last_center = None
++        # Estado completo por modelo (``to_dict``), para que cambiar de Loomis
++        # a Asaro y volver no pierda los campos propios de cada uno.
++        self.model_states = {}
+ 
+ 
+ class LoomisProportionsDocker(DockWidget):
+@@ -66,7 +84,7 @@ class LoomisProportionsDocker(DockWidget):
+         self._settings = self._load_settings()
+         i18n.set_language(self._settings.get("language") or None)
+         self.doc = None
+-        self.loomis_head = LoomisHead3D()
++        self.loomis_head = create_model(DEFAULT_MODEL) or LoomisHead3D()
+         self.loomis_layer = None
+         self.guides = []
+         self.active_index = 0
+@@ -81,11 +99,20 @@ class LoomisProportionsDocker(DockWidget):
+         self._presets = {"version": 1, "presets": {}, "characters": {}}
+         self._presets_path = self._preset_path()
+         self.feature_panel = None
++        self.hair_panel = None
++        self.asaro_panel = None
++        self.feature_stack = None
++        self.model_combo = None
++        self.model_label = None
+         self._slider_sync = False
+         self._characters = []
+         self._heads = {}
+         self._active_character = ""
+ 
++        # Estado por modelo cuando no hay guia activa (misma idea que
++        # ``Guide.model_states``).
++        self._model_stash = {}
++
+         self.setWindowTitle("Loomis Method Head Guide")
+         self.setMinimumSize(320, 420)
+         self.connect_ui()
+@@ -95,16 +122,12 @@ class LoomisProportionsDocker(DockWidget):
+         self._load_characters()
+         self._refresh_oc_combo()
+         self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
++        self.hair_panel = HairPanel(self.loomis_head, self.schedule_update, self)
++        self.asaro_panel = AsaroPanel(self.loomis_head, self.schedule_update, self)
+         self.transform_group = self._build_transform_panel()
+-        layout = self._scroll_layout()
+-        if layout is not None:
+-            index = layout.indexOf(self.ui.groupGuides)
+-            self.feature_panel_index = index + 1 if index >= 0 else layout.count()
+-            layout.insertWidget(self.feature_panel_index, self.feature_panel)
+-            layout.insertWidget(index if index >= 0 else 0, self.transform_group)
+         self.language_group = self._build_language_panel()
+-        if layout is not None:
+-            layout.insertWidget(max(0, layout.count() - 1), self.language_group)
++        self._build_dashboard()
++        self._set_model_ui(self._current_model_id())
+         self.ui.featuresButton.hide()
+         self._log_init("init:ok")
+ 
+@@ -115,10 +138,13 @@ class LoomisProportionsDocker(DockWidget):
+         self.position_sync_timer.timeout.connect(self.sync_manual_position)
+         self.position_sync_timer.start()
+ 
+-        # Coalesce slider drags into one redraw every 40 ms.
++        # Coalesce slider drags into one redraw every 220 ms. Krita 5.3.4 does
++        # not expose beginUndo/endUndo (nor KUndo2Command) to Python, so every
++        # addShapesFromSvg lands in the undo history on its own; spacing the
++        # redraws is the only mitigation available from the plugin side.
+         self._redraw_timer = QTimer(self)
+         self._redraw_timer.setSingleShot(True)
+-        self._redraw_timer.setInterval(40)
++        self._redraw_timer.setInterval(220)
+         self._redraw_timer.timeout.connect(self.draw_lines_with_vectors)
+ 
+         self._state_timer = QTimer(self)
+@@ -264,25 +290,31 @@ class LoomisProportionsDocker(DockWidget):
+                 active = 0
+             self._set_active_guide(max(0, min(active, len(self.guides) - 1)))
+         else:
+-            self.loomis_head = LoomisHead3D()
++            model, model_id = self._fresh_model()
++            self.loomis_head = model
+             self.loomis_layer = None
+             self.active_index = 0
+             self.trackball.set_model(self.loomis_head)
+             self.trackball.set_quaternion(self.loomis_head.q)
+             self._sync_euler_from_model()
+-            if self.feature_panel is not None:
+-                self.feature_panel.set_model(self.loomis_head)
++            self._sync_panels_for_model(model_id)
+         self._save_doc_state()
+ 
+     def _load_guides(self, doc, saved: dict) -> None:
+         layers = self._find_guide_layers(doc)
+         states = {}
+         centers = {}
++        model_states = {}
+         if isinstance(saved, dict):
+             for item in saved.get("guides", []):
+                 if isinstance(item, dict) and item.get("name"):
+-                    states[str(item["name"])] = item.get("state")
+-                    centers[str(item["name"])] = item.get("center")
++                    name = str(item["name"])
++                    states[name] = item.get("state")
++                    centers[name] = item.get("center")
++                    # Estados de los modelos inactivos (el activo esta en
++                    # ``state``); si falta o no es dict, la guia arranca vacia.
++                    extra = item.get("models")
++                    model_states[name] = extra if isinstance(extra, dict) else {}
+ 
+         legacy = []
+         for layer in layers:
+@@ -343,8 +375,12 @@ class LoomisProportionsDocker(DockWidget):
+                 except (AttributeError, RuntimeError, TypeError):
+                     pass
+             used.add(name)
+-            model = LoomisHead3D()
+             state = states.get(name)
++            model = None
++            if isinstance(state, dict):
++                model = create_model(state.get("model", DEFAULT_MODEL))
++            if model is None:
++                model = create_model(DEFAULT_MODEL) or LoomisHead3D()
+             if isinstance(state, dict):
+                 model.from_dict(state)
+                 self._apply_state_position(model, doc, state)
+@@ -375,6 +411,7 @@ class LoomisProportionsDocker(DockWidget):
+                 guide_center = (saved_x, saved_y) if saved_x is not None else None
+             guide = Guide(model, layer, name)
+             guide.last_center = guide_center
++            guide.model_states = model_states.get(name) or {}
+             self.guides.append(guide)
+ 
+     def _create_guide(self, doc) -> None:
+@@ -389,7 +426,7 @@ class LoomisProportionsDocker(DockWidget):
+             root.addChildNode(layer, None)
+         except (AttributeError, RuntimeError, TypeError):
+             return
+-        model = LoomisHead3D()
++        model = create_model(self._current_model_id()) or create_model(DEFAULT_MODEL)
+         if self.loomis_head is not None:
+             model.from_dict(self.loomis_head.to_dict())
+         model.set_position_x(doc.width() / 2.0)
+@@ -429,8 +466,7 @@ class LoomisProportionsDocker(DockWidget):
+         self.loomis_head = guide.model
+         self.loomis_layer = guide.layer
+         self._last_layer_bounds_center = guide.last_center
+-        if self.feature_panel is not None:
+-            self.feature_panel.set_model(self.loomis_head)
++        self._sync_panels_for_model()
+         try:
+             if self.doc is not None:
+                 self.doc.setActiveNode(guide.layer)
+@@ -477,15 +513,15 @@ class LoomisProportionsDocker(DockWidget):
+         if self.guides:
+             self._set_active_guide(min(self.active_index, len(self.guides) - 1))
+         else:
+-            self.loomis_head = LoomisHead3D()
++            model, model_id = self._fresh_model()
++            self.loomis_head = model
+             self.loomis_layer = None
+             self.active_index = 0
+             self.trackball.set_model(self.loomis_head)
+             self._refresh_guide_combo()
+             self._sync_ui_from_model()
+             self._sync_euler_from_model()
+-            if self.feature_panel is not None:
+-                self.feature_panel.set_model(self.loomis_head)
++            self._sync_panels_for_model(model_id)
+             self.schedule_update()
+         self._save_doc_state()
+ 
+@@ -519,6 +555,15 @@ class LoomisProportionsDocker(DockWidget):
+                 data["positionY"] = guide.model.position_y / height
+                 data["positionUnit"] = "normalized"
+             entry = {"name": guide.name, "state": data}
++            # Estados de los modelos inactivos de esta guia: el activo ya va en
++            # ``state``. Copia profunda para que el JSON no comparta referencias
++            # con ``guide.model_states``, que se reescribe en cada cambio.
++            active_id = self._model_id_of(guide.model)
++            entry["models"] = {
++                key: copy.deepcopy(value)
++                for key, value in guide.model_states.items()
++                if key != active_id and isinstance(value, dict)
++            }
+             if guide.last_center and width and height:
+                 entry["center"] = [guide.last_center[0] / width, guide.last_center[1] / height]
+             entries.append(entry)
+@@ -543,13 +588,13 @@ class LoomisProportionsDocker(DockWidget):
+             self._doc_key = None
+             self.guides = []
+             self.active_index = 0
+-            self.loomis_head = LoomisHead3D()
++            model, model_id = self._fresh_model()
++            self.loomis_head = model
+             self.loomis_layer = None
+             self.trackball.set_model(self.loomis_head)
+             self.trackball.set_quaternion(self.loomis_head.q)
+             self._sync_euler_from_model()
+-            if self.feature_panel is not None:
+-                self.feature_panel.set_model(self.loomis_head)
++            self._sync_panels_for_model(model_id)
+             self._refresh_guide_combo()
+             return
+         key = doc.fileName() or f"unsaved:{id(doc)}"
+@@ -597,7 +642,7 @@ class LoomisProportionsDocker(DockWidget):
+         def apply_color(col: QColor):
+             if not col.isValid():
+                 return
+-            hex_rgb = col.name(QColor.HexRgb)
++            hex_rgb = col.name()
+             self.loomis_head.set_stroke_color(hex_rgb)
+             self.ui.strokeColorSwatch.setStyleSheet(f"background-color: {hex_rgb}; border: 1px solid #666;")
+             self.schedule_update()
+@@ -611,7 +656,7 @@ class LoomisProportionsDocker(DockWidget):
+             self.schedule_update()
+ 
+         dlg.rejected.connect(revert)
+-        dlg.exec_()
++        exec_dialog(dlg)
+ 
+     def _build_transform_panel(self) -> QGroupBox:
+         group = QGroupBox(t("transform.section"))
+@@ -647,10 +692,21 @@ class LoomisProportionsDocker(DockWidget):
+             slider.setRange(-180, 180)
+         self.posXSlider.valueChanged.connect(self._on_pos_x_slider)
+         self.posYSlider.valueChanged.connect(self._on_pos_y_slider)
++        for signal, slot in (
++            (self.ui.positionXSpinBox.valueChanged, self._on_pos_x_spin),
++            (self.ui.positionYSpinBox.valueChanged, self._on_pos_y_spin),
++        ):
++            try:
++                signal.disconnect(slot)
++            except TypeError:
++                pass
+         self.ui.positionXSpinBox.valueChanged.connect(self._on_pos_x_spin)
+         self.ui.positionYSpinBox.valueChanged.connect(self._on_pos_y_spin)
+         for slider in (self.rotXSlider, self.rotYSlider, self.rotZSlider):
+             slider.valueChanged.connect(self._on_rot_slider)
++        for slider in (self.posXSlider, self.posYSlider,
++                       self.rotXSlider, self.rotYSlider, self.rotZSlider):
++            slider.sliderReleased.connect(self._redraw_now)
+         return group
+ 
+     def _refresh_transform_ranges(self) -> None:
+@@ -778,6 +834,16 @@ class LoomisProportionsDocker(DockWidget):
+         self.ui.guideDeleteButton.setToolTip(t("button.delete_head"))
+         self.ui.creditLabel.setText(t("credit.text"))
+         self.trackball.setToolTip(t("preview.hint"))
++        if hasattr(self, "tabs"):
++            for index, key in enumerate((
++                "tabs.settings",
++                "tabs.transform",
++                "tabs.guides",
++                "tabs.features",
++                "tabs.hair",
++            )):
++                if index < self.tabs.count():
++                    self.tabs.setTabText(index, t(key))
+         if hasattr(self, "language_group"):
+             self.language_group.setTitle(t("language.section"))
+             self.languageLabel.setText(t("language.label"))
+@@ -793,6 +859,15 @@ class LoomisProportionsDocker(DockWidget):
+             self.ui.viewCombo.blockSignals(False)
+         if hasattr(self, "_characters"):
+             self._refresh_oc_combo()
++        if self.model_label is not None:
++            self.model_label.setText(t("model.label"))
++        if self.model_combo is not None:
++            self.model_combo.blockSignals(True)
++            for index in range(self.model_combo.count()):
++                model_id = self.model_combo.itemData(index)
++                if model_id:
++                    self.model_combo.setItemText(index, t("model." + str(model_id)))
++            self.model_combo.blockSignals(False)
+ 
+     def connect_ui(self):
+         ui_path = os.path.join(os.path.dirname(__file__), "ui", "LoomisDocker.ui")
+@@ -810,6 +885,7 @@ class LoomisProportionsDocker(DockWidget):
+         self.trackball = HeadPreviewWidget(self.loomis_head, host)
+         lay = QVBoxLayout(host)
+         lay.setContentsMargins(0, 0, 0, 0)
++        self.trackball.setSizePolicy(EXPANDING, EXPANDING)
+         lay.addWidget(self.trackball)
+ 
+         self.trackball.orientation_changed.connect(self._on_preview_rotation)
+@@ -825,6 +901,17 @@ class LoomisProportionsDocker(DockWidget):
+             lambda v: self.with_schedule_update(lambda: self.loomis_head.set_front_line_stroke(v))
+         )
+         self.ui.backStrokeSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_back_line_stroke(v)))
++        # Releasing a canvas slider redraws at once instead of waiting out the
++        # debounce; the 3D preview keeps updating live in valueChanged.
++        for slider in (
++            self.ui.sizeSlider,
++            self.ui.sideCutSlider,
++            self.ui.faceAgeSlider,
++            self.ui.chinWidthSlider,
++            self.ui.frontStrokeSlider,
++            self.ui.backStrokeSlider,
++        ):
++            slider.sliderReleased.connect(self._redraw_now)
+ 
+         self.ui.showArrow.toggled.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_arrow(v)))
+         self.ui.zoneColors.toggled.connect(self._set_zone_colors)
+@@ -838,6 +925,319 @@ class LoomisProportionsDocker(DockWidget):
+         self.ui.saveButton.clicked.connect(self.save_head)
+         self._apply_language()
+ 
++    def _build_dashboard(self) -> None:
++        """Deja fijos cabeza, preview, vista y biblioteca; el resto en pestanas."""
++        outer = self.ui.layout()
++        scroll = self.ui.scrollArea
++        if outer is not None:
++            outer.removeWidget(scroll)
++
++        fixed = QWidget()
++        fixed_layout = QVBoxLayout(fixed)
++        fixed_layout.setContentsMargins(10, 10, 10, 6)
++        fixed_layout.setSpacing(6)
++
++        head_row = QHBoxLayout()
++        head_row.addWidget(self.ui.labelGuide)
++        head_row.addWidget(self.ui.guideCombo, 1)
++        head_row.addWidget(self.ui.guideNewButton)
++        head_row.addWidget(self.ui.guideDeleteButton)
++        fixed_layout.addLayout(head_row)
++
++        preview_row = QHBoxLayout()
++        axis = QVBoxLayout()
++        axis.addWidget(self.ui.labelRot)
++        axis.addWidget(self.ui.rotXSpin)
++        axis.addWidget(self.ui.rotYSpin)
++        axis.addWidget(self.ui.rotZSpin)
++        axis.addStretch(1)
++        preview_row.addLayout(axis)
++        self.ui.trackballHost.setFixedHeight(240)
++        preview_row.addWidget(self.ui.trackballHost, 1)
++        fixed_layout.addLayout(preview_row, 1)
++
++        view_row = QHBoxLayout()
++        view_row.addWidget(self.ui.labelView)
++        view_row.addWidget(self.ui.viewCombo, 1)
++        fixed_layout.addLayout(view_row)
++
++        fixed_layout.addWidget(self.ui.presetGroup)
++
++        actions_row = QGridLayout()
++        actions_row.addWidget(self.ui.resetButton, 0, 0)
++        actions_row.addWidget(self.ui.resetPositionButton, 0, 1)
++        actions_row.addWidget(self.ui.resetSettingsButton, 1, 0)
++        actions_row.addWidget(self.ui.saveButton, 1, 1)
++        fixed_layout.addLayout(actions_row)
++
++        if outer is not None:
++            outer.addWidget(fixed, 0)
++
++        self.tabs = QTabWidget()
++        self.tabs.setDocumentMode(True)
++        self.tabs.setUsesScrollButtons(True)
++        if outer is not None:
++            outer.addWidget(self.tabs, 1)
++
++        settings_layout = scroll.widget().layout() if scroll.widget() is not None else None
++        if settings_layout is not None:
++            if hasattr(self.ui, "separatorTop"):
++                settings_layout.removeWidget(self.ui.separatorTop)
++                self.ui.separatorTop.deleteLater()
++            if self.language_group is not None:
++                index = settings_layout.indexOf(self.ui.creditLabel)
++                settings_layout.insertWidget(
++                    index if index >= 0 else settings_layout.count(),
++                    self.language_group,
++                )
++        self.tabs.addTab(scroll, t("tabs.settings"))
++
++        self.transform_page, self.transform_page_layout = self._page(self.transform_group)
++        self.tabs.addTab(self.transform_page, t("tabs.transform"))
++
++        self.guides_page, self.guides_page_layout = self._page(self.ui.groupGuides)
++        self.tabs.addTab(self.guides_page, t("tabs.guides"))
++
++        self.feature_stack = QStackedWidget()
++        self.feature_stack.addWidget(self.feature_panel)
++        self.feature_stack.addWidget(self.asaro_panel)
++        self.feature_page, self.feature_page_layout = self._page(self.feature_stack)
++        model_row = self._build_model_row()
++        self.feature_page_layout.insertWidget(0, model_row)
++        self.tabs.addTab(self.feature_page, t("tabs.features"))
++
++        self.hair_page, self.hair_page_layout = self._page(self.hair_panel)
++        self.tabs.addTab(self.hair_page, t("tabs.hair"))
++
++    def _page(self, widget: QWidget):
++        """Envuelve un panel en una pestana con scroll propio."""
++        content = QWidget()
++        layout = QVBoxLayout(content)
++        layout.setContentsMargins(6, 6, 6, 6)
++        layout.addWidget(widget)
++        layout.addStretch(1)
++        scroll = QScrollArea()
++        scroll.setWidgetResizable(True)
++        scroll.setFrameShape(QFrame.NoFrame)
++        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
++        scroll.setWidget(content)
++        return scroll, layout
++
++    # --- modelos (Loomis / Asaro) -----------------------------------------
++    def _model_id_of(self, model) -> str:
++        """Identificador de un modelo; cae en Loomis si no se reconoce."""
++        if model is None:
++            return DEFAULT_MODEL
++        model_id = getattr(model, "model_id", None)
++        if not model_id:
++            try:
++                model_id = model.to_dict().get("model")
++            except (AttributeError, TypeError, ValueError):
++                model_id = None
++        model_id = str(model_id or DEFAULT_MODEL).strip().lower()
++        return model_id if model_id in supported_models() else DEFAULT_MODEL
++
++    def _current_model_id(self) -> str:
++        """Identificador del modelo activo; cae en Loomis si no se reconoce."""
++        return self._model_id_of(getattr(self, "loomis_head", None))
++
++    def _state_owner(self, guide=None):
++        """Guia que guarda el estado; la activa si no se indica otra."""
++        return guide if guide is not None else self.active_guide()
++
++    def _stash_model(self, model, guide=None) -> None:
++        """Guarda ``model.to_dict()`` en el stash de la guia (o el global)."""
++        if model is None:
++            return
++        try:
++            state = model.to_dict()
++        except (AttributeError, TypeError, ValueError):
++            return
++        model_id = self._model_id_of(model)
++        owner = self._state_owner(guide)
++        if owner is not None:
++            owner.model_states[model_id] = state
++        else:
++            self._model_stash[model_id] = state
++
++    def _restore_model_state(self, model_id: str, guide=None):
++        """Estado guardado del modelo: el de la guia, o el global sin guia.
++
++        Con guia activa no se cae al stash global a proposito: ese estado
++        puede venir de otro documento y traeria una posicion en pixeles ajena.
++        """
++        model_id = str(model_id or "").strip().lower()
++        owner = self._state_owner(guide)
++        if owner is not None:
++            return owner.model_states.get(model_id)
++        return self._model_stash.get(model_id)
++
++    # Campos que no son de un modelo concreto: transformacion y aspecto del
++    # trazo. Se copian siempre del modelo saliente al entrante para que la guia
++    # no salte de sitio al cambiar de modelo.
++    _COMMON_STATE_FIELDS = (
++        ("scale", "set_scale"),
++        ("position_x", "set_position_x"),
++        ("position_y", "set_position_y"),
++        ("q", "set_quaternion"),
++        ("stroke_color", "set_stroke_color"),
++        ("front_line_stroke", "set_front_line_stroke"),
++        ("back_line_stroke", "set_back_line_stroke"),
++        ("use_zone_colors", "set_zone_colors"),
++    )
++
++    def _copy_common_state(self, source, target) -> None:
++        """Copia transformacion/trazos de ``source`` a ``target``."""
++        if source is None or target is None:
++            return
++        for attr, setter_name in self._COMMON_STATE_FIELDS:
++            if not hasattr(source, attr) or not hasattr(target, attr):
++                continue
++            value = getattr(source, attr)
++            setter = getattr(target, setter_name, None)
++            if setter is None:
++                setattr(target, attr, value)
++                continue
++            try:
++                setter(value)
++            except (AttributeError, TypeError, ValueError):
++                pass
++
++    def _switch_model(self, model_id: str, guide=None):
++        """Cambia el modelo activo conservando el estado de cada modelo.
++
++        Guarda el estado completo del modelo saliente y restaura el del
++        entrante si ya se habia usado. Despues **siempre** reaplica los campos
++        comunes del saliente: el stash solo aporta lo propio de cada modelo
++        (``head_sex``, ``cranium``, ``show_planes``, ``detail``...), asi que
++        mover/rotar/escalar y cambiar de modelo no devuelve la transformacion
++        vieja del stash.
++        """
++        model_id = str(model_id or "").strip().lower()
++        new = create_model(model_id)
++        if new is None:
++            return None
++        owner = self._state_owner(guide)
++        old = self.loomis_head
++        state = self._restore_model_state(model_id, owner)
++        if old is not None:
++            self._stash_model(old, owner)
++        if state is not None:
++            try:
++                new.from_dict(state)
++            except (AttributeError, TypeError, ValueError):
++                pass
++        elif old is not None:
++            # Primera vez con este modelo: cada clase ignora las claves que no
++            # conoce (p. ej. showPlanes al volver a Loomis).
++            try:
++                new.from_dict(old.to_dict())
++            except (AttributeError, TypeError, ValueError):
++                pass
++        self._copy_common_state(old, new)
++        if owner is not None:
++            owner.model = new
++        self.loomis_head = new
++        self.trackball.set_model(new)
++        self._sync_panels_for_model(model_id)
++        self._sync_ui_from_model()
++        self._sync_euler_from_model()
++        self.schedule_update()
++        return new
++
++    def _fresh_model(self):
++        """Nueva instancia del modelo activo y su id (Loomis como respaldo)."""
++        model_id = self._current_model_id()
++        model = create_model(model_id)
++        if model is None:
++            model_id = DEFAULT_MODEL
++            model = create_model(model_id) or LoomisHead3D()
++        return model, model_id
++
++    def _loomis_model(self):
++        """Instancia Loomis para construir paneles que solo existen en Loomis."""
++        return create_model(DEFAULT_MODEL) or LoomisHead3D()
++
++    def _sync_panels_for_model(self, model_id: str | None = None) -> None:
++        """Alinea combo/stack y los paneles con el modelo activo.
++
++        Los paneles de rasgos y pelo son exclusivos de Loomis: con Asaro se
++        ocultan (el stack muestra AsaroPanel) y no se tocan.
++        """
++        model_id = model_id or self._current_model_id()
++        self._set_model_ui(model_id)
++        if model_id == "asaro":
++            if self.asaro_panel is not None:
++                self.asaro_panel.set_model(self.loomis_head)
++            return
++        if self.feature_panel is not None:
++            self.feature_panel.set_model(self.loomis_head)
++        if self.hair_panel is not None:
++            self.hair_panel.set_model(self.loomis_head)
++
++    def _set_model_ui(self, model_id: str) -> None:
++        """Combo, stack de Rasgos, pestanas y filas Loomis-only segun modelo."""
++        is_asaro = model_id == "asaro"
++        if self.model_combo is not None:
++            index = self.model_combo.findData(model_id)
++            if index >= 0 and index != self.model_combo.currentIndex():
++                self.model_combo.blockSignals(True)
++                self.model_combo.setCurrentIndex(index)
++                self.model_combo.blockSignals(False)
++        if self.feature_stack is not None:
++            self.feature_stack.setCurrentIndex(1 if is_asaro else 0)
++        if hasattr(self, "tabs"):
++            for tab in (2, 4):  # Guias y Pelo
++                if tab < self.tabs.count():
++                    self.tabs.setTabEnabled(tab, not is_asaro)
++        # Filas de Ajustes que solo existen en Loomis.
++        for name in (
++            "labelSideCut", "sideCutSlider",
++            "labelFaceAge", "faceAgeSlider",
++            "labelChinWidth", "chinWidthSlider",
++        ):
++            widget = getattr(self.ui, name, None)
++            if widget is not None:
++                widget.setVisible(not is_asaro)
++
++    def _build_model_row(self) -> QWidget:
++        """Fila con el combo de modelo, encima del panel de Rasgos."""
++        box = QWidget()
++        row = QHBoxLayout(box)
++        row.setContentsMargins(0, 0, 0, 0)
++        self.model_label = QLabel(t("model.label"))
++        self.model_combo = QComboBox()
++        for model_id in supported_models():
++            self.model_combo.addItem(t("model." + model_id), model_id)
++        current = self.model_combo.findData(self._current_model_id())
++        if current >= 0:
++            self.model_combo.setCurrentIndex(current)
++        activated_index(self.model_combo).connect(self._on_model_changed)
++        row.addWidget(self.model_label)
++        row.addWidget(self.model_combo, 1)
++        return box
++
++    def _on_model_changed(self, index: int) -> None:
++        """Cambia el modelo activo conservando el estado de cada modelo."""
++        if self.model_combo is None:
++            return
++        model_id = str(self.model_combo.itemData(index) or "").strip().lower()
++        if not model_id:
++            return
++        if model_id == self._current_model_id():
++            self._set_model_ui(model_id)
++            return
++        if self._switch_model(model_id) is None:
++            self.ui.presetStatus.setText(t("error.model_unknown", model=model_id))
++            previous = self.model_combo.findData(self._current_model_id())
++            if previous >= 0:
++                self.model_combo.blockSignals(True)
++                self.model_combo.setCurrentIndex(previous)
++                self.model_combo.blockSignals(False)
++            return
++        self._save_doc_state()
++        self.ui.presetStatus.setText(t("status.model_switched", model=t("model." + model_id)))
++
+     def schedule_update(self):
+         self.trackball.update()
+         # A redraw can change the layer's bounding-box center even when the
+@@ -907,6 +1307,20 @@ class LoomisProportionsDocker(DockWidget):
+         if hasattr(self, "_state_timer"):
+             self._state_timer.start()
+ 
++    def _redraw_now(self, *_args) -> None:
++        """Flush a pending redraw at once (slider released)."""
++        if hasattr(self, "_redraw_timer"):
++            self._redraw_timer.stop()
++        self.update_scheduled = False
++        self.draw_lines_with_vectors()
++
++    # Limitation: Krita 5.3.4's krita.pyi exposes neither beginUndo/endUndo nor
++    # KUndo2Command, so the plugin cannot open an undo macro around this call.
++    # Each redraw (shape.remove + addShapesFromSvg) therefore leaves its own
++    # entries in the undo history. Mitigation only: space the redraws out
++    # (220 ms debounce, immediate flush on sliderReleased). Grouping them into a
++    # single undo step needs C++ (or a layer swap Krita groups, which would break
++    # Guide.layer/guides.json) and stays as debt.
+     def draw_lines_with_vectors(self, samples: int = 512):
+         if not self.doc:
+             self.update_scheduled = False
+@@ -1003,10 +1417,10 @@ class LoomisProportionsDocker(DockWidget):
+         os.replace(temp, self._presets_path)
+ 
+     def _bind_library(self) -> None:
+-        self.ui.presetCombo.activated[str].connect(self._on_preset_activated)
++        activated_text(self.ui.presetCombo).connect(self._on_preset_activated)
+         self.ui.presetSaveButton.clicked.connect(self._save_preset)
+         self.ui.presetDeleteButton.clicked.connect(self._delete_preset)
+-        self.ui.ocCombo.activated[int].connect(self._on_oc_activated)
++        activated_index(self.ui.ocCombo).connect(self._on_oc_activated)
+         self.ui.ocSaveButton.clicked.connect(self._save_to_character)
+         self.ui.headLoadButton.clicked.connect(self._load_head_file)
+         self.ui.headSaveButton.clicked.connect(self._export_head_file)
+@@ -1016,8 +1430,8 @@ class LoomisProportionsDocker(DockWidget):
+             self.ui.viewCombo.addItem(t(key))
+         self.ui.viewCombo.setCurrentIndex(0)
+         self.ui.viewCombo.blockSignals(False)
+-        self.ui.viewCombo.activated[int].connect(self._apply_view)
+-        self.ui.guideCombo.activated[int].connect(self._on_guide_selected)
++        activated_index(self.ui.viewCombo).connect(self._apply_view)
++        activated_index(self.ui.guideCombo).connect(self._on_guide_selected)
+         self.ui.guideNewButton.clicked.connect(self._new_guide)
+         self.ui.guideDeleteButton.clicked.connect(self._delete_guide)
+         for spin in (self.ui.rotXSpin, self.ui.rotYSpin, self.ui.rotZSpin):
+@@ -1057,10 +1471,6 @@ class LoomisProportionsDocker(DockWidget):
+         except OSError:
+             pass
+ 
+-    def _scroll_layout(self):
+-        content = self.ui.scrollArea.widget()
+-        return content.layout() if content is not None else None
+-
+     def _build_language_panel(self) -> QGroupBox:
+         group = QGroupBox(t("language.section"))
+         form = QFormLayout(group)
+@@ -1074,7 +1484,7 @@ class LoomisProportionsDocker(DockWidget):
+         code = self._settings.get("language") or ""
+         index = self.languageCombo.findData(code)
+         self.languageCombo.setCurrentIndex(index if index >= 0 else 0)
+-        self.languageCombo.activated[int].connect(self._on_language_changed)
++        activated_index(self.languageCombo).connect(self._on_language_changed)
+         form.addRow(self.languageLabel, self.languageCombo)
+         return group
+ 
+@@ -1087,21 +1497,44 @@ class LoomisProportionsDocker(DockWidget):
+         self._reload_localized_panels()
+ 
+     def _reload_localized_panels(self) -> None:
+-        layout = self._scroll_layout()
+-        if layout is None:
+-            return
+-        for widget in (self.feature_panel, self.transform_group):
+-            if widget is not None:
+-                layout.removeWidget(widget)
+-                widget.deleteLater()
+-        index = layout.indexOf(self.ui.groupGuides)
+-        self.transform_group = self._build_transform_panel()
+-        layout.insertWidget(index if index >= 0 else 0, self.transform_group)
+-        index = layout.indexOf(self.ui.groupGuides)
+-        self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
+-        layout.insertWidget(index + 1 if index >= 0 else layout.count(), self.feature_panel)
++        """Recrea los paneles traducidos tras cambiar de idioma."""
++        if self.feature_stack is not None:
++            old_feature = self.feature_panel
++            old_asaro = self.asaro_panel
++            if old_feature is not None:
++                self.feature_stack.removeWidget(old_feature)
++            if old_asaro is not None:
++                self.feature_stack.removeWidget(old_asaro)
++            self.feature_panel = FeaturePanel(self._loomis_model(), self.schedule_update, self)
++            self.asaro_panel = AsaroPanel(self.loomis_head, self.schedule_update, self)
++            self.feature_stack.insertWidget(0, self.feature_panel)
++            self.feature_stack.insertWidget(1, self.asaro_panel)
++            for old in (old_feature, old_asaro):
++                if old is not None:
++                    old.deleteLater()
++        if self.hair_panel is not None and hasattr(self, "hair_page_layout"):
++            self.hair_page_layout.removeWidget(self.hair_panel)
++            self.hair_panel.deleteLater()
++            self.hair_panel = HairPanel(self._loomis_model(), self.schedule_update, self)
++            self.hair_page_layout.insertWidget(0, self.hair_panel)
++        if hasattr(self, "transform_page_layout"):
++            old = getattr(self, "transform_group", None)
++            if old is not None:
++                self.transform_page_layout.removeWidget(old)
++                old.deleteLater()
++            self.transform_group = self._build_transform_panel()
++            self.transform_page_layout.insertWidget(0, self.transform_group)
++        if self.model_label is not None:
++            self.model_label.setText(t("model.label"))
++        if self.model_combo is not None:
++            self.model_combo.blockSignals(True)
++            for index in range(self.model_combo.count()):
++                model_id = self.model_combo.itemData(index)
++                if model_id:
++                    self.model_combo.setItemText(index, t("model." + str(model_id)))
++            self.model_combo.blockSignals(False)
+         self.ui.featuresButton.hide()
+-        self.feature_panel.set_model(self.loomis_head)
++        self._sync_panels_for_model()
+         self._sync_ui_from_model()
+         self._sync_euler_from_model()
+ 
+@@ -1261,6 +1694,12 @@ class LoomisProportionsDocker(DockWidget):
+             self.ui.presetStatus.setText(t("status.missing", name=name))
+ 
+     def apply_preset(self, data: dict) -> None:
++        data = data if isinstance(data, dict) else {}
++        target = str(data.get("model") or self._current_model_id() or DEFAULT_MODEL).strip().lower()
++        if target not in supported_models():
++            target = self._current_model_id()
++        if target != self._current_model_id():
++            self._switch_model(target)
+         self.loomis_head.from_dict(data)
+         doc, width, height = self._doc_size()
+         normalized = data.get("positionUnit") == "normalized"
+@@ -1275,8 +1714,7 @@ class LoomisProportionsDocker(DockWidget):
+         self.trackball.set_quaternion(self.loomis_head.q)
+         self._sync_ui_from_model()
+         self._sync_euler_from_model()
+-        if self.feature_panel is not None:
+-            self.feature_panel.sync_from_model()
++        self._sync_panels_for_model()
+         self.schedule_update()
+ 
+     def _sync_ui_from_model(self) -> None:
+@@ -1378,10 +1816,18 @@ class LoomisProportionsDocker(DockWidget):
+         if not isinstance(data, dict) or ("head" not in raw and "scale" not in data):
+             self.ui.presetStatus.setText(t("error.bad_head"))
+             return
+-        model = str(raw.get("model") or raw.get("generator") or data.get("model") or "loomis").lower()
+-        if model not in ("loomis", "loomis-head", ""):
+-            self.ui.presetStatus.setText(t("error.head_model", model=model))
++        model = str(
++            raw.get("model") or data.get("model")
++            or raw.get("generator") or data.get("generator") or DEFAULT_MODEL
++        ).strip().lower()
++        # Nombres antiguos del generador que siguen significando Loomis.
++        if model in ("", "loomis-head", "loomis method head guide"):
++            model = DEFAULT_MODEL
++        if create_model(model) is None:
++            self.ui.presetStatus.setText(t("error.model_unknown", model=model))
+             return
++        data = dict(data)
++        data["model"] = model
+         self.apply_preset(data)
+         self.ui.presetStatus.setText(t("status.head_loaded", name=Path(path).name))
+ 
+@@ -1392,16 +1838,18 @@ class LoomisProportionsDocker(DockWidget):
+             self, t("file.save_title"), suggested, t("file.filter"))
+         if not path:
+             return
++        head = self._capture_preset()
++        model_id = str(head.get("model") or DEFAULT_MODEL)
+         wrapper = {
+             "format": "loomis-head",
+             "version": 1,
+-            "model": "loomis",
+-            "generator": "Loomis Method Head Guide",
++            "model": model_id,
++            "generator": str(head.get("generator") or model_id),
+             "name": name,
+             "author": "",
+             "license": "",
+             "tags": [],
+-            "head": self._capture_preset(),
++            "head": head,
+         }
+         try:
+             Path(path).write_text(json.dumps(wrapper, ensure_ascii=False, indent=2), encoding="utf-8")
+diff --git a/loomis_head/models.py b/loomis_head/models.py
+new file mode 100644
+index 0000000..0b68f65
+--- /dev/null
++++ b/loomis_head/models.py
+@@ -0,0 +1,36 @@
++# SPDX-FileCopyrightText: 2026 imboolean
++# SPDX-License-Identifier: GPL-3.0-only
++
++"""Registro de modelos de cabeza.
++
++Es el unico punto que conoce todas las implementaciones. Ni
++``loomis_head_generator`` ni ``asaro`` importan este modulo, para no crear
++ciclos: el plugin pide aqui la clase y trabaja contra la interfaz comun.
++"""
++
++from .asaro import AsaroHead
++from .loomis_head_generator import LoomisHead3D
++
++MODELS = {
++    "loomis": LoomisHead3D,
++    "asaro": AsaroHead,
++}
++
++DEFAULT_MODEL = "loomis"
++
++
++def create_model(model_id: str | None = None):
++    """Instancia del modelo pedido, o ``None`` si no existe.
++
++    ``None`` usa ``DEFAULT_MODEL``. Un identificador desconocido devuelve
++    ``None`` para que el llamador decida el error (aviso en la UI, cabeza
++    ignorada al cargar un preset, etc.).
++    """
++    key = DEFAULT_MODEL if model_id is None else str(model_id).strip().lower()
++    cls = MODELS.get(key)
++    return None if cls is None else cls()
++
++
++def supported_models() -> tuple[str, ...]:
++    """Identificadores aceptados por :func:`create_model`."""
++    return tuple(MODELS)
+diff --git a/loomis_head/preview.py b/loomis_head/preview.py
+index be8e7b8..f4acc1d 100644
+--- a/loomis_head/preview.py
++++ b/loomis_head/preview.py
+@@ -7,15 +7,25 @@ from __future__ import annotations
+ import copy
+ import math
+ 
+-from PyQt5.QtCore import QByteArray, Qt, pyqtSignal
+-from PyQt5.QtGui import QColor, QPainter
+-from PyQt5.QtSvg import QSvgRenderer
+-from PyQt5.QtWidgets import QWidget
++from .qt_compat import QByteArray, QColor, QPainter, QSvgRenderer, QWidget, Qt, pyqtSignal
+ 
+ from .euclid import Vector3
+ from .linalg import q_axis_angle, q_identity, q_mul, q_normalize
+ 
+ 
++def event_xy(event):
++    """``(x, y)`` del raton como floats, en PyQt5 y PyQt6.
++
++    Qt6 elimina ``pos()/x()/y()`` y deja ``position()``. El PyQt5 que trae
++    Krita 5.3.4 (5.15.11) **no** expone ``position()`` pero si ``localPos()``,
++    que devuelve el mismo ``QPointF`` en coordenadas del widget. Se resuelve
++    por evento porque el binding depende de la version en tiempo de ejecucion.
++    """
++    position = getattr(event, "position", None)
++    point = position() if position is not None else event.localPos()
++    return float(point.x()), float(point.y())
++
++
+ class HeadPreviewWidget(QWidget):
+     """Muestra la cabeza y la rota con el raton.
+ 
+@@ -78,7 +88,8 @@ class HeadPreviewWidget(QWidget):
+ 
+     def mousePressEvent(self, event) -> None:
+         if event.button() in (Qt.LeftButton, Qt.RightButton):
+-            self._start = event.pos()
++            # Qt6 mueve la posicion a ``position()``; el helper cubre PyQt5.
++            self._start = event_xy(event)
+             self._q_start = self._q
+             self._roll = bool(event.button() == Qt.RightButton or event.modifiers() & Qt.ShiftModifier)
+             self.setCursor(Qt.ClosedHandCursor)
+@@ -90,12 +101,13 @@ class HeadPreviewWidget(QWidget):
+         if self._start is None or self._q_start is None:
+             super().mouseMoveEvent(event)
+             return
++        x, y = event_xy(event)
+         if self._roll:
+-            angle = (event.x() - self._start.x()) * 0.01
++            angle = (x - self._start[0]) * 0.01
+             delta = q_axis_angle([0.0, 0.0, 1.0], angle)
+         else:
+-            v0 = self._project(self._start.x(), self._start.y())
+-            v1 = self._project(event.x(), event.y())
++            v0 = self._project(self._start[0], self._start[1])
++            v1 = self._project(x, y)
+             delta = self._rotation(v0, v1)
+         self._q = q_normalize(q_mul(delta, self._q_start))
+         self.orientation_changed.emit(self._q)
+@@ -132,8 +144,8 @@ class HeadPreviewWidget(QWidget):
+ 
+         preview = copy.deepcopy(self.model)
+         preview.set_position_x(width * 0.5)
+-        preview.set_position_y(height * 0.5)
+-        preview.set_scale(1.05 * self._zoom)
++        preview.set_position_y(height * 0.45)
++        preview.set_scale(0.95 * self._zoom)
+         preview.set_front_line_stroke(2.0)
+         preview.set_back_line_stroke(1.4)
+         preview.set_quaternion(self._q)
+diff --git a/loomis_head/qt_compat.py b/loomis_head/qt_compat.py
+new file mode 100644
+index 0000000..de67220
+--- /dev/null
++++ b/loomis_head/qt_compat.py
+@@ -0,0 +1,190 @@
++# SPDX-FileCopyrightText: 2026 imboolean
++# SPDX-License-Identifier: GPL-3.0-only
++
++"""Capa de compatibilidad PyQt5 / PyQt6 para Krita 5 y Krita 6.
++
++Krita 5.3.x trae PyQt5; Krita 6 pasa a PyQt6. Los modulos del plugin importan
++todo desde aqui y nunca desde ``PyQt5``/``PyQt6`` directamente.
++
++Diferencias que cubre este modulo:
++
++- PyQt6 elimina los enums sin ambito: ``Qt.Horizontal`` deja de existir y hay
++  que escribir ``Qt.Orientation.Horizontal``. El objeto ``Qt`` que se exporta
++  en PyQt6 mapea los nombres cortos que usa el plugin.
++- ``QColor.name(QColor.HexRgb)``: ``HexRgb`` es el formato por defecto en ambas
++  versiones, asi que los modulos llaman a ``col.name()``.
++- ``QDialog.exec_()`` desaparece en PyQt6 (queda ``exec()``): se usa
++  ``exec_dialog(dlg)``.
++- ``QSizePolicy.Expanding`` pasa a ``QSizePolicy.Policy.Expanding``: se usa
++  ``EXPANDING``.
++- Otros enums escopados que aparecen en el codigo (``QStandardPaths``,
++  ``QColorDialog``, ``QFrame``, ``QPainter``) se reexportan como subclases con
++  el nombre corto, para no tener que tocar esas lineas en los modulos.
++"""
++from __future__ import annotations
++
++try:  # Krita 5.x
++    from PyQt5 import QtCore, QtGui, QtSvg, QtWidgets, uic
++
++    QT6 = False
++except ImportError:  # Krita 6.x
++    from PyQt6 import QtCore, QtGui, QtSvg, QtWidgets, uic
++
++    QT6 = True
++
++# --- QtCore -----------------------------------------------------------------
++QByteArray = QtCore.QByteArray
++QDateTime = QtCore.QDateTime
++QLocale = QtCore.QLocale
++QRect = QtCore.QRect
++QSignalBlocker = QtCore.QSignalBlocker
++QStandardPaths = QtCore.QStandardPaths
++QTimer = QtCore.QTimer
++pyqtSignal = QtCore.pyqtSignal
++
++# --- QtGui ------------------------------------------------------------------
++QBrush = QtGui.QBrush
++QColor = QtGui.QColor
++QPainter = QtGui.QPainter
++QPen = QtGui.QPen
++
++# --- QtWidgets --------------------------------------------------------------
++QCheckBox = QtWidgets.QCheckBox
++QColorDialog = QtWidgets.QColorDialog
++QComboBox = QtWidgets.QComboBox
++QFileDialog = QtWidgets.QFileDialog
++QFormLayout = QtWidgets.QFormLayout
++QFrame = QtWidgets.QFrame
++QGridLayout = QtWidgets.QGridLayout
++QGroupBox = QtWidgets.QGroupBox
++QHBoxLayout = QtWidgets.QHBoxLayout
++QLabel = QtWidgets.QLabel
++QScrollArea = QtWidgets.QScrollArea
++QSizePolicy = QtWidgets.QSizePolicy
++QSlider = QtWidgets.QSlider
++QStackedWidget = QtWidgets.QStackedWidget
++QTabWidget = QtWidgets.QTabWidget
++QVBoxLayout = QtWidgets.QVBoxLayout
++QWidget = QtWidgets.QWidget
++
++# --- QtSvg ------------------------------------------------------------------
++QSvgRenderer = QtSvg.QSvgRenderer
++
++
++class _Qt6Namespace:
++    """Nombres cortos de enum que usa el plugin, resueltos a PyQt6 escopado.
++
++    Cualquier otro atributo se delega al ``Qt`` real de PyQt6.
++    """
++
++    Horizontal = QtCore.Qt.Orientation.Horizontal
++    LeftButton = QtCore.Qt.MouseButton.LeftButton
++    RightButton = QtCore.Qt.MouseButton.RightButton
++    NoPen = QtCore.Qt.PenStyle.NoPen
++    NoBrush = QtCore.Qt.BrushStyle.NoBrush
++    OpenHandCursor = QtCore.Qt.CursorShape.OpenHandCursor
++    ClosedHandCursor = QtCore.Qt.CursorShape.ClosedHandCursor
++    ScrollBarAlwaysOff = QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
++    ShiftModifier = QtCore.Qt.KeyboardModifier.ShiftModifier
++
++    def __getattr__(self, name):
++        try:
++            return getattr(QtCore.Qt, name)
++        except AttributeError:
++            raise AttributeError(f"Qt.{name} no existe en PyQt6") from None
++
++
++if QT6:
++
++    Qt = _Qt6Namespace()
++    EXPANDING = QtWidgets.QSizePolicy.Policy.Expanding
++
++    def exec_dialog(dlg):
++        """Ejecuta un dialogo modal (``exec()`` en PyQt6)."""
++        return dlg.exec()
++
++    def activated_index(combo):
++        """Senal ``activated`` con indice; en PyQt6 solo queda esa firma."""
++        return combo.activated
++
++    def activated_text(combo):
++        """Senal ``activated`` con texto; en Qt6 se llama ``textActivated``."""
++        return combo.textActivated
++
++    class QStandardPaths(QtCore.QStandardPaths):  # noqa: N801
++        """``QStandardPaths`` con los nombres cortos de ubicacion."""
++
++        AppDataLocation = QtCore.QStandardPaths.StandardLocation.AppDataLocation
++
++    class QColorDialog(QtWidgets.QColorDialog):  # noqa: N801
++        """``QColorDialog`` con los nombres cortos de opcion."""
++
++        DontUseNativeDialog = QtWidgets.QColorDialog.ColorDialogOption.DontUseNativeDialog
++
++    class QFrame(QtWidgets.QFrame):  # noqa: N801
++        """``QFrame`` con los nombres cortos de forma."""
++
++        NoFrame = QtWidgets.QFrame.Shape.NoFrame
++
++    class QPainter(QtGui.QPainter):  # noqa: N801
++        """``QPainter`` con el nombre corto ``Antialiasing``."""
++
++        Antialiasing = QtGui.QPainter.RenderHint.Antialiasing
++
++else:
++
++    Qt = QtCore.Qt
++    EXPANDING = QtWidgets.QSizePolicy.Expanding
++
++    def exec_dialog(dlg):
++        """Ejecuta un dialogo modal (``exec_()`` en PyQt5)."""
++        return dlg.exec_()
++
++    def activated_index(combo):
++        """Senal ``activated`` con indice (``activated[int]`` en PyQt5)."""
++        return combo.activated[int]
++
++    def activated_text(combo):
++        """Senal ``activated`` con texto (``activated[str]`` en PyQt5)."""
++        return combo.activated[str]
++
++
++__all__ = [
++    "QT6",
++    "EXPANDING",
++    "QBrush",
++    "QByteArray",
++    "QCheckBox",
++    "QColor",
++    "QColorDialog",
++    "QComboBox",
++    "QDateTime",
++    "QFileDialog",
++    "QFormLayout",
++    "QFrame",
++    "QGridLayout",
++    "QGroupBox",
++    "QHBoxLayout",
++    "QLabel",
++    "QLocale",
++    "QPainter",
++    "QPen",
++    "QRect",
++    "QScrollArea",
++    "QSignalBlocker",
++    "QSizePolicy",
++    "QSlider",
++    "QStackedWidget",
++    "QStandardPaths",
++    "QSvgRenderer",
++    "QTabWidget",
++    "QTimer",
++    "QVBoxLayout",
++    "QWidget",
++    "Qt",
++    "activated_index",
++    "activated_text",
++    "exec_dialog",
++    "pyqtSignal",
++    "uic",
++]
+diff --git a/loomis_head/test_asaro.py b/loomis_head/test_asaro.py
+new file mode 100644
+index 0000000..fede819
+--- /dev/null
++++ b/loomis_head/test_asaro.py
+@@ -0,0 +1,206 @@
++# SPDX-FileCopyrightText: 2026 imboolean
++# SPDX-License-Identifier: GPL-3.0-only
++
++"""Pruebas de la cabeza Asaro y del registro de modelos (sin Krita).
++
++Ejecutar desde esta carpeta:
++    python3 -m unittest test_asaro.py -v
++"""
++import sys
++import types
++import unittest
++import xml.etree.ElementTree as ET
++from pathlib import Path
++
++# El paquete real importa krita en __init__.py; aqui solo probamos los modelos.
++_pkg = types.ModuleType("loomis_head")
++_pkg.__path__ = [str(Path(__file__).resolve().parent)]
++sys.modules.setdefault("loomis_head", _pkg)
++
++from loomis_head.asaro import EDGE_COLOR, PLANE_COLOR, AsaroHead  # noqa: E402
++from loomis_head.linalg import q_axis_angle  # noqa: E402
++from loomis_head.loomis_head_generator import LoomisHead3D  # noqa: E402
++from loomis_head.models import (  # noqa: E402
++    DEFAULT_MODEL,
++    MODELS,
++    create_model,
++    supported_models,
++)
++
++
++def _valid_svg(test: unittest.TestCase, svg: str) -> None:
++    test.assertIn("<svg", svg)
++    test.assertTrue(svg.endswith("</svg>"))
++    test.assertNotIn("nan", svg.lower())
++    test.assertNotIn("inf", svg.lower())
++    ET.fromstring(svg)  # XML bien formado
++
++
++class AsaroTests(unittest.TestCase):
++    def test_default_svg(self):
++        svg = AsaroHead().build_svg(1000, 800)
++        _valid_svg(self, svg)
++        self.assertIn("<path", svg)
++
++    def test_planes_and_edges_toggle(self):
++        head = AsaroHead()
++        both = head.build_svg(800, 800)
++        head.set_show_edges(False)
++        planes_only = head.build_svg(800, 800)
++        self.assertLess(len(planes_only), len(both))
++        head.set_show_planes(False)
++        nothing = head.build_svg(800, 800)
++        self.assertNotIn("<path", nothing)
++        _valid_svg(self, nothing)
++        head.set_show_edges(True)
++        edges_only = head.build_svg(800, 800)
++        _valid_svg(self, edges_only)
++        self.assertNotIn('title="asaro-planes"', edges_only)
++        self.assertIn('title="asaro-edges"', edges_only)
++
++    def test_detail_levels(self):
++        head = AsaroHead()
++        head.set_detail(0)
++        coarse = head.build_svg(800, 800)
++        head.set_detail(1)
++        standard = head.build_svg(800, 800)
++        head.set_detail(2)
++        fine = head.build_svg(800, 800)
++        self.assertLess(len(coarse), len(standard))
++        self.assertLess(len(standard), len(fine))
++        for svg in (coarse, standard, fine):
++            _valid_svg(self, svg)
++
++    def test_rotation_changes_svg(self):
++        head = AsaroHead()
++        front = head.build_svg(800, 800)
++        head.set_quaternion(q_axis_angle([0, 1, 0], 0.7))
++        turned = head.build_svg(800, 800)
++        self.assertNotEqual(front, turned)
++        _valid_svg(self, turned)
++        head.set_quaternion(q_axis_angle([1, 0, 0], -0.5))
++        _valid_svg(self, head.build_svg(800, 800))
++
++    def test_dict_roundtrip(self):
++        head = AsaroHead()
++        head.set_scale(1.4)
++        head.set_position_x(320)
++        head.set_position_y(210)
++        head.set_quaternion(q_axis_angle([0, 1, 0], 0.4))
++        head.set_front_line_stroke(12)
++        head.set_back_line_stroke(5)
++        head.set_stroke_color("#112233")
++        head.set_zone_colors(True)
++        head.set_show_planes(False)
++        head.set_show_edges(True)
++        head.set_detail(2)
++        data = head.to_dict()
++        self.assertEqual(data["model"], "asaro")
++        self.assertEqual(data["generator"], "asaro")
++        self.assertEqual(data["version"], 1)
++
++        clone = AsaroHead()
++        clone.from_dict(data)
++        self.assertEqual(data, clone.to_dict())
++        self.assertEqual(head.build_svg(800, 800), clone.build_svg(800, 800))
++
++    def test_from_dict_tolerates_garbage(self):
++        head = AsaroHead()
++        head.from_dict({})
++        _valid_svg(self, head.build_svg(800, 800))
++        head.from_dict({"scale": "no", "rotation": [1, 2], "detail": None})
++        _valid_svg(self, head.build_svg(800, 800))
++        head.from_dict({"rotation": [0, 0, 0, 0], "strokeColor": "azul"})
++        _valid_svg(self, head.build_svg(800, 800))
++        self.assertEqual(head.model_id, "asaro")
++
++    def test_from_dict_accepts_loomis_preset(self):
++        # Un preset Loomis no debe romper la carga: se leen las claves comunes.
++        loomis = LoomisHead3D()
++        head = AsaroHead()
++        head.from_dict(loomis.to_dict())
++        self.assertEqual(head.model_id, "asaro")
++        self.assertAlmostEqual(head.side_cut, loomis.side_cut)
++        _valid_svg(self, head.build_svg(800, 800))
++
++    def test_interface_setters(self):
++        head = AsaroHead()
++        head.set_scale(0.8)
++        head.set_position_x(100)
++        head.set_position_y(-50)
++        head.set_quaternion(q_axis_angle([0, 0, 1], 0.2))
++        head.set_front_line_stroke(9)
++        head.set_back_line_stroke(6)
++        head.set_stroke_color("#ABCDEF")
++        head.set_zone_colors(True)
++        head.set_sidecut(0.5)
++        head.set_face_age(0.6)
++        head.set_chin_width(1.2)
++        head.set_show_face(False)
++        head.set_arrow(False)
++        head.set_silhouette(False)
++        head.set_side_rims(False)
++        head.set_side_cross(False)
++        head.set_show_planes(True)
++        head.set_show_edges(True)
++        head.set_detail(1)
++        svg = head.build_svg(800, 800)
++        _valid_svg(self, svg)
++        self.assertIn(PLANE_COLOR, svg)
++        self.assertIn(EDGE_COLOR, svg)
++
++    def test_clamps(self):
++        head = AsaroHead()
++        head.set_scale(0)
++        self.assertGreaterEqual(head.scale, 0.05)
++        head.set_scale(99)
++        self.assertLessEqual(head.scale, 5.0)
++        head.set_front_line_stroke(999)
++        self.assertLessEqual(head.front_line_stroke, 60.0)
++        head.set_back_line_stroke(0)
++        self.assertGreaterEqual(head.back_line_stroke, 0.5)
++        head.set_detail(9)
++        self.assertEqual(head.detail, 2)
++        head.set_detail(-4)
++        self.assertEqual(head.detail, 0)
++        head.set_position_x(float("nan"))
++        self.assertTrue(head.position_x == head.position_x)  # no NaN
++
++    def test_extremes_keep_svg_finite(self):
++        head = AsaroHead()
++        for scale in (0.05, 1.0, 5.0):
++            for angle in (-3.0, 0.0, 3.0):
++                head.set_scale(scale)
++                head.set_quaternion(q_axis_angle([0, 1, 0], angle))
++                _valid_svg(self, head.build_svg(800, 800))
++                head.set_detail(2)
++                _valid_svg(self, head.build_svg(1200, 400))
++
++    def test_svg_follows_position_and_scale(self):
++        head = AsaroHead()
++        small = head.build_svg(800, 800)
++        head.set_scale(2.0)
++        big = head.build_svg(800, 800)
++        self.assertNotEqual(small, big)
++        _valid_svg(self, big)
++
++
++class RegistryTests(unittest.TestCase):
++    def test_registry_contents(self):
++        self.assertEqual(MODELS["loomis"], LoomisHead3D)
++        self.assertEqual(MODELS["asaro"], AsaroHead)
++        self.assertEqual(DEFAULT_MODEL, "loomis")
++        self.assertEqual(supported_models(), ("loomis", "asaro"))
++
++    def test_create_model(self):
++        self.assertIsInstance(create_model("loomis"), LoomisHead3D)
++        self.assertIsInstance(create_model("asaro"), AsaroHead)
++        self.assertIsInstance(create_model(" ASARO "), AsaroHead)
++        self.assertIsInstance(create_model(), LoomisHead3D)
++        self.assertIsNone(create_model("nope"))
++        self.assertIsNone(create_model(""))
++        self.assertIsNone(create_model(42))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/loomis_head/test_generator.py b/loomis_head/test_generator.py
+index 51a3600..3153a09 100644
+--- a/loomis_head/test_generator.py
++++ b/loomis_head/test_generator.py
+@@ -191,6 +191,361 @@ class GeneratorTests(unittest.TestCase):
+         payload = json.dumps(LoomisHead3D().to_dict())
+         self.assertIn('"version": 1', payload)
+ 
++    # --- 0.6.0: proporciones, guias, ritmo y luz -------------------------
++
++    def test_proportion_defaults(self):
++        head = LoomisHead3D()
++        self.assertEqual(head.forehead_height, 1.0)
++        self.assertEqual(head.jaw_angle, 0.0)
++        self.assertEqual(head.cranium_width, 1.0)
++        self.assertEqual(head.cranium_height, 1.0)
++        self.assertEqual(head.cheekbone_height, 0.5)
++        self.assertEqual(head.chin_sharpness, 0.0)
++        self.assertFalse(head.show_rhythm)
++        self.assertEqual(head.rhythm_strength, 0.6)
++
++    def test_proportion_clamps(self):
++        head = LoomisHead3D()
++        head.set_forehead_height(99)
++        self.assertEqual(head.forehead_height, 1.4)
++        head.set_forehead_height(-99)
++        self.assertEqual(head.forehead_height, 0.6)
++        head.set_jaw_angle(9)
++        self.assertEqual(head.jaw_angle, 1.0)
++        head.set_cranium_width(0.0)
++        self.assertEqual(head.cranium_width, 0.8)
++        head.set_cranium_height(9.0)
++        self.assertEqual(head.cranium_height, 1.2)
++        head.set_cheekbone_height(-1)
++        self.assertEqual(head.cheekbone_height, 0.0)
++        head.set_chin_sharpness(2)
++        self.assertEqual(head.chin_sharpness, 1.0)
++        head.set_rhythm_strength(2)
++        self.assertEqual(head.rhythm_strength, 1.0)
++
++    def test_proportion_extremes_render(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        head.set_show_hair(True)
++        cases = [
++            (head.set_forehead_height, (0.6, 1.4)),
++            (head.set_jaw_angle, (0.0, 1.0)),
++            (head.set_cranium_width, (0.8, 1.2)),
++            (head.set_cranium_height, (0.8, 1.2)),
++            (head.set_cheekbone_height, (0.0, 1.0)),
++            (head.set_chin_sharpness, (0.0, 1.0)),
++        ]
++        for setter, values in cases:
++            for value in values:
++                setter(value)
++                svg = head.build_svg(800, 800)
++                self.assertIn("<svg", svg)
++                self.assertNotIn("nan", svg.lower())
++                self.assertNotIn("inf", svg.lower())
++
++    def test_cranium_scales_geometry(self):
++        head = LoomisHead3D()
++        base = head.build_svg(800, 800)
++        head.set_cranium_width(1.2)
++        wide = head.build_svg(800, 800)
++        self.assertNotEqual(base, wide)
++        head.set_cranium_width(1.0)
++        head.set_cranium_height(1.2)
++        tall = head.build_svg(800, 800)
++        self.assertNotEqual(base, tall)
++        self.assertNotIn("nan", tall.lower())
++
++    def test_forehead_height_moves_hairline(self):
++        head = LoomisHead3D()
++        head.set_show_hair(True)
++        head.set_forehead_height(0.6)
++        low = head.build_svg(800, 800)
++        head.set_forehead_height(1.4)
++        high = head.build_svg(800, 800)
++        self.assertNotEqual(low, high)
++        self.assertNotIn("nan", high.lower())
++
++    def test_chin_sharpness_changes_jaw(self):
++        head = LoomisHead3D()
++        round_chin = head.build_svg(800, 800)
++        head.set_chin_sharpness(1.0)
++        point_chin = head.build_svg(800, 800)
++        self.assertNotEqual(round_chin, point_chin)
++        self.assertNotIn("nan", point_chin.lower())
++
++    def test_rhythm_zone(self):
++        head = LoomisHead3D()
++        head.set_zone_colors(True)
++        head.set_show_rhythm(True)
++        svg = head.build_svg(800, 800)
++        self.assertIn("#D96A8A", svg)
++        head.set_show_rhythm(False)
++        svg = head.build_svg(800, 800)
++        self.assertNotIn("#D96A8A", svg)
++
++    def test_rhythm_strength_changes_curves(self):
++        head = LoomisHead3D()
++        head.set_show_rhythm(True)
++        head.set_rhythm_strength(0.0)
++        weak = head.build_svg(800, 800)
++        head.set_rhythm_strength(1.0)
++        strong = head.build_svg(800, 800)
++        self.assertNotEqual(weak, strong)
++
++    def test_rhythm_central_curve_passes_landmarks(self):
++        head = LoomisHead3D()
++        head.set_show_rhythm(True)
++        rc = head.radius * head.cranium
++        brow_y = (head.brow_line - 0.5) * 2.0 * rc
++        nose_y = (head.nose_line - 0.5) * 2.0 * rc - head.nose_length * rc
++        mouth_y = (head.mouth_line - 0.5) * 2.0 * rc
++        curves = head._rhythm_curves(rc)
++        self.assertGreaterEqual(len(curves), 4)
++        central = curves[0]
++        self.assertTrue(central)
++        for target in (brow_y, nose_y, mouth_y):
++            nearest = min(abs(point.y - target) for point in central)
++            self.assertLess(nearest, 0.02 * rc)
++        # La curva central baja de la corona al menton y no se va de la esfera
++        # en el tramo de los rasgos.
++        self.assertGreater(central[0].y, 0.9 * rc)
++        self.assertLess(central[-1].y, mouth_y)
++        for point in central:
++            self.assertFalse(math.isnan(point.x + point.y + point.z))
++
++    def test_rhythm_strength_changes_arcs(self):
++        head = LoomisHead3D()
++        head.set_show_rhythm(True)
++        rc = head.radius * head.cranium
++        head.set_rhythm_strength(0.0)
++        weak = head._rhythm_curves(rc)
++        head.set_rhythm_strength(1.0)
++        strong = head._rhythm_curves(rc)
++        self.assertNotEqual(weak[1][0].x, strong[1][0].x)
++        self.assertNotEqual([p.z for p in weak[0]], [p.z for p in strong[0]])
++
++    def test_guide_toggles(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        all_on = head.build_svg(800, 800)
++        for setter in (
++            head.set_show_brow_guide,
++            head.set_show_eye_guide,
++            head.set_show_nose_guide,
++            head.set_show_mouth_guide,
++        ):
++            before = head.build_svg(800, 800)
++            setter(False)
++            after = head.build_svg(800, 800)
++            self.assertLess(len(after), len(before))
++        self.assertLess(len(head.build_svg(800, 800)), len(all_on))
++        head.set_show_features(False)
++        self.assertLess(len(head.build_svg(800, 800)), len(all_on))
++
++    def test_guide_defaults(self):
++        head = LoomisHead3D()
++        for name in ("show_brow_guide", "show_eye_guide",
++                     "show_nose_guide", "show_mouth_guide"):
++            self.assertTrue(getattr(head, name))
++
++    def test_new_fields_roundtrip(self):
++        head = LoomisHead3D()
++        head.set_forehead_height(1.25)
++        head.set_jaw_angle(0.8)
++        head.set_cranium_width(1.1)
++        head.set_cranium_height(0.9)
++        head.set_cheekbone_height(0.7)
++        head.set_chin_sharpness(0.6)
++        head.set_show_rhythm(True)
++        head.set_rhythm_strength(0.9)
++        head.set_show_brow_guide(False)
++        head.set_show_nose_guide(False)
++        head.set_head_sex(1)
++        head.set_brow_ridge(0.8)
++        head.set_eye_socket_depth(0.2)
++        head.set_eye_socket_size(0.75)
++        head.set_show_eye_socket(False)
++        head.set_cheek_fullness(0.9)
++        clone = LoomisHead3D()
++        clone.from_dict(head.to_dict())
++        self.assertEqual(head.to_dict(), clone.to_dict())
++        self.assertEqual(head.build_svg(900, 700), clone.build_svg(900, 700))
++
++    def test_dict_051_compatibility(self):
++        # Preset de 0.5.1: sin ninguna clave nueva.
++        legacy = {
++            "version": 1,
++            "generator": "loomis",
++            "model": "loomis",
++            "scale": 1.0,
++            "sideCut": 0.66,
++            "faceAge": 1.0,
++            "chinWidth": 1.0,
++            "cranium": 1.0,
++            "jawTaper": 1.0,
++            "cheek": 0.0,
++            "faceWidth": 1.0,
++            "jawDrop": 1.0,
++            "showFeatures": True,
++            "browLine": 0.62,
++            "eyeLine": 0.5,
++            "noseLine": 0.32,
++            "mouthLine": 0.18,
++        }
++        head = LoomisHead3D()
++        head.from_dict(legacy)
++        svg = head.build_svg(800, 800)
++        self.assertIn("<svg", svg)
++        self.assertNotIn("nan", svg.lower())
++        self.assertEqual(head.forehead_height, 1.0)
++        self.assertEqual(head.jaw_angle, 0.0)
++        self.assertEqual(head.cranium_width, 1.0)
++        self.assertEqual(head.cranium_height, 1.0)
++        self.assertEqual(head.cheekbone_height, 0.5)
++        self.assertEqual(head.chin_sharpness, 0.0)
++        self.assertFalse(head.show_rhythm)
++        self.assertEqual(head.rhythm_strength, 0.6)
++        self.assertTrue(head.show_brow_guide)
++        self.assertEqual(head.head_sex, 0)
++        self.assertEqual(head.brow_ridge, 0.5)
++        self.assertEqual(head.eye_socket_depth, 0.5)
++        self.assertEqual(head.eye_socket_size, 0.55)
++        self.assertTrue(head.show_eye_socket)
++        self.assertEqual(head.cheek_fullness, 0.5)
++
++    def test_dict_060_ignores_light_keys(self):
++        # Preset de 0.6.0: trae claves de luz que 0.6.1 ya no usa.
++        payload = LoomisHead3D().to_dict()
++        payload.update({
++            "lightAzimuth": 120.0,
++            "lightElevation": -40.0,
++            "lightIntensity": 0.8,
++            "showShadow": True,
++            "shadowMode": 1,
++        })
++        for key in ("headSex", "browRidge", "eyeSocketDepth", "eyeSocketSize",
++                    "showEyeSocket", "cheekFullness"):
++            payload.pop(key)
++        head = LoomisHead3D()
++        head.from_dict(payload)
++        svg = head.build_svg(800, 800)
++        self.assertIn("<svg", svg)
++        self.assertNotIn("nan", svg.lower())
++        self.assertFalse(hasattr(head, "light_azimuth"))
++        self.assertFalse(hasattr(head, "show_shadow"))
++
++    # --- 0.6.1: sexo, cuenca orbitaria, ceja y mejillas -------------------
++
++    def test_sex_and_socket_defaults(self):
++        head = LoomisHead3D()
++        self.assertEqual(head.head_sex, 0)
++        self.assertEqual(head.brow_ridge, 0.5)
++        self.assertEqual(head.eye_socket_depth, 0.5)
++        self.assertEqual(head.eye_socket_size, 0.55)
++        self.assertTrue(head.show_eye_socket)
++        self.assertEqual(head.cheek_fullness, 0.5)
++
++    def test_sex_and_socket_clamps(self):
++        head = LoomisHead3D()
++        head.set_head_sex(7)
++        self.assertEqual(head.head_sex, 1)
++        head.set_head_sex(-3)
++        self.assertEqual(head.head_sex, 0)
++        head.set_brow_ridge(9)
++        self.assertEqual(head.brow_ridge, 1.0)
++        head.set_eye_socket_depth(-1)
++        self.assertEqual(head.eye_socket_depth, 0.0)
++        head.set_eye_socket_size(99)
++        self.assertEqual(head.eye_socket_size, 0.9)
++        head.set_eye_socket_size(0.0)
++        self.assertEqual(head.eye_socket_size, 0.2)
++        head.set_cheek_fullness(2)
++        self.assertEqual(head.cheek_fullness, 1.0)
++        head.set_show_eye_socket(False)
++        self.assertFalse(head.show_eye_socket)
++
++    def test_new_keys_in_dict(self):
++        payload = LoomisHead3D().to_dict()
++        for key in ("headSex", "browRidge", "eyeSocketDepth", "eyeSocketSize",
++                    "showEyeSocket", "cheekFullness"):
++            self.assertIn(key, payload)
++        for key in ("lightAzimuth", "lightElevation", "lightIntensity",
++                    "showShadow", "shadowMode"):
++            self.assertNotIn(key, payload)
++
++    def test_eye_socket_toggle(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        with_socket = head.build_svg(800, 800)
++        head.set_show_eye_socket(False)
++        without = head.build_svg(800, 800)
++        self.assertLess(len(without), len(with_socket))
++        self.assertNotIn("nan", without.lower())
++        head.set_show_features(False)
++        self.assertLess(len(head.build_svg(800, 800)), len(without))
++
++    def test_eye_socket_hidden_without_features(self):
++        head = LoomisHead3D()
++        head.set_show_features(False)
++        head.set_show_eye_socket(True)
++        bare = head.build_svg(800, 800)
++        head.set_show_eye_socket(False)
++        self.assertEqual(bare, head.build_svg(800, 800))
++
++    def test_eye_socket_depth_and_size_change_svg(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        head.set_eye_socket_depth(0.0)
++        shallow = head.build_svg(800, 800)
++        head.set_eye_socket_depth(1.0)
++        deep = head.build_svg(800, 800)
++        self.assertNotEqual(shallow, deep)
++        head.set_eye_socket_size(0.2)
++        small = head.build_svg(800, 800)
++        head.set_eye_socket_size(0.9)
++        big = head.build_svg(800, 800)
++        self.assertNotEqual(small, big)
++        for svg in (shallow, deep, small, big):
++            self.assertNotIn("nan", svg.lower())
++            self.assertNotIn("inf", svg.lower())
++
++    def test_brow_ridge_changes_svg(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        head.set_brow_ridge(0.0)
++        flat = head.build_svg(800, 800)
++        head.set_brow_ridge(1.0)
++        strong = head.build_svg(800, 800)
++        self.assertNotEqual(flat, strong)
++        self.assertNotIn("nan", strong.lower())
++
++    def test_cheek_fullness_changes_svg(self):
++        head = LoomisHead3D()
++        head.set_show_face(True)
++        head.set_cheek_fullness(0.0)
++        lean = head.build_svg(800, 800)
++        head.set_cheek_fullness(1.0)
++        full = head.build_svg(800, 800)
++        self.assertNotEqual(lean, full)
++        self.assertNotIn("nan", full.lower())
++
++    def test_socket_extremes_render(self):
++        head = LoomisHead3D()
++        head.set_show_features(True)
++        cases = [
++            (head.set_brow_ridge, (0.0, 1.0)),
++            (head.set_eye_socket_depth, (0.0, 1.0)),
++            (head.set_eye_socket_size, (0.2, 0.9)),
++            (head.set_cheek_fullness, (0.0, 1.0)),
++        ]
++        for setter, values in cases:
++            for value in values:
++                setter(value)
++                svg = head.build_svg(800, 800)
++                self.assertIn("<svg", svg)
++                self.assertNotIn("nan", svg.lower())
++                self.assertNotIn("inf", svg.lower())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/loomis_head/trackball.py b/loomis_head/trackball.py
+index 724b039..569c399 100644
+--- a/loomis_head/trackball.py
++++ b/loomis_head/trackball.py
+@@ -6,9 +6,7 @@
+ # trackball.py
+ import math
+ 
+-from PyQt5.QtCore import QRect, Qt, pyqtSignal
+-from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
+-from PyQt5.QtWidgets import QWidget
++from .qt_compat import QBrush, QColor, QPainter, QPen, QRect, QWidget, Qt, pyqtSignal
+ 
+ from loomis_head.euclid import Vector3
+ 
+@@ -21,6 +19,7 @@ from .linalg import (
+     q_normalize,
+     q_to_mat3,
+ )
++from .preview import event_xy
+ 
+ 
+ class TrackballWidget(QWidget):
+@@ -44,11 +43,11 @@ class TrackballWidget(QWidget):
+         self.setMouseTracking(False)
+         self._update_quaternion()
+ 
+-    def _pos_to_forward_vec(self, pos):
++    def _pos_to_forward_vec(self, x, y):
+         cx, cy, r = self._center_radius()
+         rx = max(r * 0.82, 1.0)
+-        x = (pos.x() - cx) / rx
+-        y = (cy - pos.y()) / rx  # Y up
++        x = (x - cx) / rx
++        y = (cy - y) / rx  # Y up
+         d2 = x * x + y * y
+         if d2 <= 1.0:
+             z = math.sqrt(max(0.0, 1.0 - d2))
+@@ -83,10 +82,10 @@ class TrackballWidget(QWidget):
+         r = 0.5 * min(w, h) - 2.0
+         return (w * 0.5, h * 0.5, r)
+ 
+-    def _angle_at(self, pos):
++    def _angle_at(self, x, y):
+         cx, cy, _ = self._center_radius()
+-        x = pos.x() - cx
+-        y = cy - pos.y()  # up
++        x = x - cx
++        y = cy - y  # up
+         return math.atan2(y, x)
+ 
+     def mousePressEvent(self, e):
+@@ -94,8 +93,10 @@ class TrackballWidget(QWidget):
+             return super().mousePressEvent(e)
+ 
+         cx, cy, r = self._center_radius()
+-        dx = e.x() - cx
+-        dy = e.y() - cy
++        # Qt6 elimina ``x()/y()``: ``event_xy`` devuelve floats en ambas.
++        x, y = event_xy(e)
++        dx = x - cx
++        dy = y - cy
+         dist = math.hypot(dx, dy)
+ 
+         ring_outer = r
+@@ -103,7 +104,7 @@ class TrackballWidget(QWidget):
+ 
+         if ring_inner <= dist <= ring_outer:
+             self._mode = "roll"
+-            self._theta0 = self._angle_at(e.pos())
++            self._theta0 = self._angle_at(x, y)
+             self._roll0 = self.roll
+         elif dist <= ring_inner:
+             self._mode = "turntable"
+@@ -122,13 +123,13 @@ class TrackballWidget(QWidget):
+             return super().mouseMoveEvent(e)
+ 
+         if self._mode == "turntable":
+-            v = self._pos_to_forward_vec(e.pos())
++            v = self._pos_to_forward_vec(*event_xy(e))
+             self.yaw = math.atan2(float(v[0]), float(v[2]))  # right = +yaw
+             self.pitch = -math.asin(max(-1.0, min(1.0, float(v[1]))))  # up = +pitch
+             self._update_quaternion()
+ 
+         elif self._mode == "roll":
+-            th = self._angle_at(e.pos())
++            th = self._angle_at(*event_xy(e))
+             dth = th - self._theta0
+             if dth > math.pi:
+                 dth -= 2 * math.pi
+diff --git a/loomis_head/translations/en.json b/loomis_head/translations/en.json
+index 1aa4b7c..461fa11 100644
+--- a/loomis_head/translations/en.json
++++ b/loomis_head/translations/en.json
+@@ -42,13 +42,37 @@
+   "features.title": "Features & caricature",
+   "features.master": "Show facial features",
+   "features.section.caricature": "Caricature",
++  "features.section.proportions": "Proportions",
++  "features.section.style": "Style",
+   "features.section.lines": "Loomis lines",
+   "features.section.features": "Features",
++  "features.sex": "Sex",
++  "features.sex.male": "Male",
++  "features.sex.female": "Female",
++  "features.section.eye": "Eye socket & brows",
++  "features.eye_socket": "Eye socket",
++  "features.eye_socket_depth": "Socket depth",
++  "features.eye_socket_size": "Socket size",
++  "features.brow_ridge": "Brow ridge",
++  "features.cheek_fullness": "Cheek fullness",
+   "features.cranium": "Cranium",
+   "features.jaw_taper": "Jaw",
+   "features.cheek": "Cheek",
+   "features.face_width": "Face width",
+   "features.jaw_drop": "Jaw drop",
++  "features.forehead_height": "Forehead height",
++  "features.jaw_angle": "Jaw angle",
++  "features.cranium_width": "Head width",
++  "features.cranium_height": "Head height",
++  "features.cheekbone_height": "Cheekbone height",
++  "features.chin_sharpness": "Chin sharpness",
++  "features.rhythm": "Rhythm curves",
++  "features.rhythm_strength": "Rhythm strength",
++  "features.guides": "Line guides",
++  "features.guide_brow": "Brow",
++  "features.guide_eye": "Eyes",
++  "features.guide_nose": "Nose",
++  "features.guide_mouth": "Mouth",
+   "features.brow_line": "Brow height",
+   "features.eye_line": "Eye line",
+   "features.nose_line": "Nose line",
+@@ -67,7 +91,7 @@
+   "features.brows": "Brows",
+   "features.nose": "Nose",
+   "features.ears": "Ears",
+-  "features.mouth": "Mouth",
++  "features.mouth": "Mouth curve",
+   "features.close": "Close",
+   "status.saved_oc_json": "Saved to {name} (JSON + preset)",
+   "status.saved_oc_sidecar": "Saved to {name} (preset only)",
+@@ -94,6 +118,17 @@
+   "headtype.anime": "Anime",
+   "headtype.chibi": "Chibi",
+   "headtype.caricature": "Caricature",
++  "model.label": "Model",
++  "model.loomis": "Loomis",
++  "model.asaro": "Asaro",
++  "asaro.show_planes": "Show planes",
++  "asaro.show_edges": "Show edges",
++  "asaro.detail": "Detail",
++  "asaro.detail.low": "Low",
++  "asaro.detail.medium": "Medium",
++  "asaro.detail.high": "High",
++  "status.model_switched": "Model: {model}",
++  "error.model_unknown": "Unknown head model: {model}",
+   "preview.hint": "Drag to rotate · Shift/right-drag to roll · Wheel to zoom · Double-click to reset",
+   "hair.section": "Hair",
+   "hair.show": "Show hair guide",
+@@ -125,5 +160,10 @@
+   "language.section": "Language",
+   "language.label": "Language",
+   "language.auto": "Auto (system)",
+-  "status.no_grimorio": "Grimoire not detected — standalone mode"
++  "status.no_grimorio": "Grimoire not detected — standalone mode",
++  "tabs.settings": "Settings",
++  "tabs.transform": "Move",
++  "tabs.guides": "Guides",
++  "tabs.features": "Features",
++  "tabs.hair": "Hair"
+ }
+diff --git a/loomis_head/translations/es.json b/loomis_head/translations/es.json
+index 517038f..708c6a6 100644
+--- a/loomis_head/translations/es.json
++++ b/loomis_head/translations/es.json
+@@ -42,13 +42,37 @@
+   "features.title": "Rasgos y caricatura",
+   "features.master": "Mostrar rasgos faciales",
+   "features.section.caricature": "Caricatura",
++  "features.section.proportions": "Proporciones",
++  "features.section.style": "Estilo",
+   "features.section.lines": "Líneas de Loomis",
+   "features.section.features": "Rasgos",
++  "features.sex": "Sexo",
++  "features.sex.male": "Masculino",
++  "features.sex.female": "Femenino",
++  "features.section.eye": "Cuenca y cejas",
++  "features.eye_socket": "Cuenca del ojo",
++  "features.eye_socket_depth": "Profundidad de la cuenca",
++  "features.eye_socket_size": "Tamaño de la cuenca",
++  "features.brow_ridge": "Ceja prominente",
++  "features.cheek_fullness": "Relleno de mejillas",
+   "features.cranium": "Cráneo",
+   "features.jaw_taper": "Mandíbula",
+   "features.cheek": "Pómulo",
+   "features.face_width": "Ancho de cara",
+   "features.jaw_drop": "Caída de mandíbula",
++  "features.forehead_height": "Altura de frente",
++  "features.jaw_angle": "Ángulo de mandíbula",
++  "features.cranium_width": "Ancho de cabeza",
++  "features.cranium_height": "Alto de cabeza",
++  "features.cheekbone_height": "Altura de pómulo",
++  "features.chin_sharpness": "Afilado de barbilla",
++  "features.rhythm": "Curvas de ritmo",
++  "features.rhythm_strength": "Intensidad de ritmo",
++  "features.guides": "Guías de línea",
++  "features.guide_brow": "Ceja",
++  "features.guide_eye": "Ojos",
++  "features.guide_nose": "Nariz",
++  "features.guide_mouth": "Boca",
+   "features.brow_line": "Altura de ceja",
+   "features.eye_line": "Línea de ojos",
+   "features.nose_line": "Línea de nariz",
+@@ -67,7 +91,7 @@
+   "features.brows": "Cejas",
+   "features.nose": "Nariz",
+   "features.ears": "Orejas",
+-  "features.mouth": "Boca",
++  "features.mouth": "Curva de boca",
+   "features.close": "Cerrar",
+   "status.saved_oc_json": "Guardado en {name} (JSON + preset)",
+   "status.saved_oc_sidecar": "Guardado en {name} (solo preset)",
+@@ -94,6 +118,17 @@
+   "headtype.anime": "Anime",
+   "headtype.chibi": "Chibi",
+   "headtype.caricature": "Caricatura",
++  "model.label": "Modelo",
++  "model.loomis": "Loomis",
++  "model.asaro": "Asaro",
++  "asaro.show_planes": "Mostrar planos",
++  "asaro.show_edges": "Mostrar aristas",
++  "asaro.detail": "Detalle",
++  "asaro.detail.low": "Bajo",
++  "asaro.detail.medium": "Medio",
++  "asaro.detail.high": "Alto",
++  "status.model_switched": "Modelo: {model}",
++  "error.model_unknown": "Modelo de cabeza desconocido: {model}",
+   "preview.hint": "Arrastra para rotar · Shift/botón derecho para girar · Rueda para zoom · Doble clic para reiniciar",
+   "hair.section": "Pelo",
+   "hair.show": "Mostrar guía de pelo",
+@@ -125,5 +160,10 @@
+   "language.section": "Idioma",
+   "language.label": "Idioma",
+   "language.auto": "Auto (sistema)",
+-  "status.no_grimorio": "Grimorio no detectado — modo independiente"
++  "status.no_grimorio": "Grimorio no detectado — modo independiente",
++  "tabs.settings": "Ajustes",
++  "tabs.transform": "Mover",
++  "tabs.guides": "Guías",
++  "tabs.features": "Rasgos",
++  "tabs.hair": "Pelo"
+ }
+diff --git a/loomis_head/translations/fr.json b/loomis_head/translations/fr.json
+index cc2df6c..da36b8d 100644
+--- a/loomis_head/translations/fr.json
++++ b/loomis_head/translations/fr.json
+@@ -52,13 +52,37 @@
+   "features.title": "Traits et caricature",
+   "features.master": "Afficher les traits du visage",
+   "features.section.caricature": "Caricature",
++  "features.section.proportions": "Proportions",
++  "features.section.style": "Style",
+   "features.section.lines": "Lignes de Loomis",
+   "features.section.features": "Traits",
++  "features.sex": "Sexe",
++  "features.sex.male": "Masculin",
++  "features.sex.female": "Féminin",
++  "features.section.eye": "Orbite et sourcils",
++  "features.eye_socket": "Orbite de l'œil",
++  "features.eye_socket_depth": "Profondeur de l'orbite",
++  "features.eye_socket_size": "Taille de l'orbite",
++  "features.brow_ridge": "Arcade sourcilière",
++  "features.cheek_fullness": "Pleineur des joues",
+   "features.cranium": "Crâne",
+   "features.jaw_taper": "Mâchoire",
+   "features.cheek": "Pommette",
+   "features.face_width": "Largeur du visage",
+   "features.jaw_drop": "Descente de la mâchoire",
++  "features.forehead_height": "Hauteur du front",
++  "features.jaw_angle": "Angle de la mâchoire",
++  "features.cranium_width": "Largeur de tête",
++  "features.cranium_height": "Hauteur de tête",
++  "features.cheekbone_height": "Hauteur de la pommette",
++  "features.chin_sharpness": "Finesse du menton",
++  "features.rhythm": "Courbes de rythme",
++  "features.rhythm_strength": "Intensité du rythme",
++  "features.guides": "Repères de ligne",
++  "features.guide_brow": "Sourcil",
++  "features.guide_eye": "Yeux",
++  "features.guide_nose": "Nez",
++  "features.guide_mouth": "Bouche",
+   "features.brow_line": "Hauteur du sourcil",
+   "features.eye_line": "Ligne des yeux",
+   "features.nose_line": "Ligne du nez",
+@@ -77,7 +101,7 @@
+   "features.brows": "Sourcils",
+   "features.nose": "Nez",
+   "features.ears": "Oreilles",
+-  "features.mouth": "Bouche",
++  "features.mouth": "Courbe de bouche",
+   "features.close": "Fermer",
+   "view.label": "Vue",
+   "view.front": "Face",
+@@ -92,6 +116,17 @@
+   "headtype.anime": "Anime",
+   "headtype.chibi": "Chibi",
+   "headtype.caricature": "Caricature",
++  "model.label": "Modèle",
++  "model.loomis": "Loomis",
++  "model.asaro": "Asaro",
++  "asaro.show_planes": "Afficher les plans",
++  "asaro.show_edges": "Afficher les arêtes",
++  "asaro.detail": "Détail",
++  "asaro.detail.low": "Bas",
++  "asaro.detail.medium": "Moyen",
++  "asaro.detail.high": "Élevé",
++  "status.model_switched": "Modèle : {model}",
++  "error.model_unknown": "Modèle de tête inconnu : {model}",
+   "button.load_head": "Charger une tête…",
+   "button.export_head": "Exporter une tête…",
+   "preview.hint": "Glisser pour tourner · Maj/clic droit pour rouler · Molette pour zoomer · Double-clic pour réinitialiser",
+@@ -125,5 +160,10 @@
+   "language.section": "Langue",
+   "language.label": "Langue",
+   "language.auto": "Auto (système)",
+-  "status.no_grimorio": "Grimoire non détecté — mode autonome"
++  "status.no_grimorio": "Grimoire non détecté — mode autonome",
++  "tabs.settings": "Réglages",
++  "tabs.transform": "Déplacer",
++  "tabs.guides": "Repères",
++  "tabs.features": "Traits",
++  "tabs.hair": "Cheveux"
+ }
+diff --git a/loomis_head/translations/pt.json b/loomis_head/translations/pt.json
+index 4ab59eb..f1bc667 100644
+--- a/loomis_head/translations/pt.json
++++ b/loomis_head/translations/pt.json
+@@ -52,13 +52,37 @@
+   "features.title": "Traços e caricatura",
+   "features.master": "Mostrar traços faciais",
+   "features.section.caricature": "Caricatura",
++  "features.section.proportions": "Proporções",
++  "features.section.style": "Estilo",
+   "features.section.lines": "Linhas de Loomis",
+   "features.section.features": "Traços",
++  "features.sex": "Sexo",
++  "features.sex.male": "Masculino",
++  "features.sex.female": "Feminino",
++  "features.section.eye": "Órbita e sobrancelhas",
++  "features.eye_socket": "Órbita do olho",
++  "features.eye_socket_depth": "Profundidade da órbita",
++  "features.eye_socket_size": "Tamanho da órbita",
++  "features.brow_ridge": "Arco superciliar",
++  "features.cheek_fullness": "Preenchimento das bochechas",
+   "features.cranium": "Crânio",
+   "features.jaw_taper": "Mandíbula",
+   "features.cheek": "Maçã do rosto",
+   "features.face_width": "Largura do rosto",
+   "features.jaw_drop": "Queda da mandíbula",
++  "features.forehead_height": "Altura da testa",
++  "features.jaw_angle": "Ângulo da mandíbula",
++  "features.cranium_width": "Largura da cabeça",
++  "features.cranium_height": "Altura da cabeça",
++  "features.cheekbone_height": "Altura da maçã do rosto",
++  "features.chin_sharpness": "Afiamento do queixo",
++  "features.rhythm": "Curvas de ritmo",
++  "features.rhythm_strength": "Intensidade do ritmo",
++  "features.guides": "Guias de linha",
++  "features.guide_brow": "Sobrancelha",
++  "features.guide_eye": "Olhos",
++  "features.guide_nose": "Nariz",
++  "features.guide_mouth": "Boca",
+   "features.brow_line": "Altura da sobrancelha",
+   "features.eye_line": "Linha dos olhos",
+   "features.nose_line": "Linha do nariz",
+@@ -77,7 +101,7 @@
+   "features.brows": "Sobrancelhas",
+   "features.nose": "Nariz",
+   "features.ears": "Orelhas",
+-  "features.mouth": "Boca",
++  "features.mouth": "Curva de boca",
+   "features.close": "Fechar",
+   "view.label": "Vista",
+   "view.front": "Frontal",
+@@ -92,6 +116,17 @@
+   "headtype.anime": "Anime",
+   "headtype.chibi": "Chibi",
+   "headtype.caricature": "Caricatura",
++  "model.label": "Modelo",
++  "model.loomis": "Loomis",
++  "model.asaro": "Asaro",
++  "asaro.show_planes": "Mostrar planos",
++  "asaro.show_edges": "Mostrar arestas",
++  "asaro.detail": "Detalhe",
++  "asaro.detail.low": "Baixo",
++  "asaro.detail.medium": "Médio",
++  "asaro.detail.high": "Alto",
++  "status.model_switched": "Modelo: {model}",
++  "error.model_unknown": "Modelo de cabeça desconhecido: {model}",
+   "button.load_head": "Carregar cabeça…",
+   "button.export_head": "Exportar cabeça…",
+   "preview.hint": "Arraste para girar · Shift/botão direito para rolar · Roda para zoom · Duplo clique para reiniciar",
+@@ -125,5 +160,10 @@
+   "language.section": "Idioma",
+   "language.label": "Idioma",
+   "language.auto": "Automático (sistema)",
+-  "status.no_grimorio": "Grimório não detectado — modo independente"
++  "status.no_grimorio": "Grimório não detectado — modo independente",
++  "tabs.settings": "Ajustes",
++  "tabs.transform": "Mover",
++  "tabs.guides": "Guias",
++  "tabs.features": "Traços",
++  "tabs.hair": "Cabelo"
+ }
+diff --git a/loomis_head/ui/LoomisDocker.ui b/loomis_head/ui/LoomisDocker.ui
+index 4b73a04..dad3823 100644
+--- a/loomis_head/ui/LoomisDocker.ui
++++ b/loomis_head/ui/LoomisDocker.ui
+@@ -560,7 +560,7 @@
+                         <number>0</number>
+                     </property>
+                     <item>
+-                        <layout class="QHBoxLayout" name="actions">
++                        <layout class="QHBoxLayout" name="actionsLayout">
+                             <property name="spacing">
+                                 <number>6</number>
+                             </property>
+diff --git a/release/README.md b/release/README.md
+index 7b8631d..6ce2b4b 100644
+--- a/release/README.md
++++ b/release/README.md
+@@ -1,6 +1,6 @@
+ # Release
+ 
+-`loomis-head-guide-0.5.0.zip` is the installable package. Its root contains
++`loomis-head-guide-0.7.0.zip` is the installable package. Its root contains
+ `loomis_head/` and `loomis_head.desktop`, so Krita's **Tools → Scripts → Import Python
+ Plugins** accepts it directly.
+ 
+@@ -8,6 +8,21 @@ The ZIP is built from the `loomis_head/` folder in this repository:
+ 
+ ```bash
+ cd ..
+-zip -r release/loomis-head-guide-0.5.0.zip loomis_head loomis_head.desktop \
++zip -r release/loomis-head-guide-0.7.0.zip loomis_head loomis_head.desktop \
+   -x '*/__pycache__/*' '*.pyc' '*.bak*'
+ ```
++
++## Other files
++
++- `loomis-head-guide-0.7.0.patch` — cumulative diff from the 0.5.0 base (`b8a762d`) to
++  0.7.0. See `UPSTREAM-DIFF-0.7.0.md` for how to apply it and what it excludes.
++- `UPSTREAM-DIFF-0.7.0.md` — per-area summary of the diff and its base.
++- `README-UPSTREAM.md` — handoff for the upstream author: features, compatibility, how to
++  test and known limits (PyQt6 untested, undo without a macro, loose Asaro profile).
++
++## Checks before publishing
++
++```bash
++cd loomis_head && python3 -m unittest test_generator test_asaro   # 53 tests
++cd .. && unzip -l release/loomis-head-guide-0.7.0.zip | grep -E 'models|asaro|qt_compat'
++```

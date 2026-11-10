@@ -65,3 +65,38 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   QAM action discovery, sex presets and socket controls.
 - Compatibility: head JSON from 0.5.1 and 0.6.0 loads with the new keys at their defaults.
 - Note: the 0.6.0 entry is kept as history; 0.6.1 withdraws the light.
+
+## 0.7.0 — 2026-11-10
+
+- **Head model registry** (`models.py`): `MODELS`, `DEFAULT_MODEL`, `create_model()` and
+  `supported_models()`. It is the only module that knows the implementations; the
+  generator and the models never import it, so there are no cycles. Unknown ids return
+  `None` and the caller decides the message.
+- **Asaro head** (`asaro.py`): a low-poly planar head (~40 faces: forehead, brow, socket,
+  nose, cheekbone, jaw, chin) drawn as orthographic face contours with painter's algorithm.
+  Front edges use `front_line_stroke`, back edges use `back_line_stroke` and `dash_back`.
+  Own parameters: `show_planes`, `show_edges`, `detail` (0 coarse, 1 standard, 2 fine). The
+  Loomis interface (`set_sidecut`, `set_show_face`, …) exists as a no-op so the shared UI
+  does not break. No light or shadow.
+- **Model switch with per-model stash**: a **Model** combo (Loomis / Asaro) above the
+  Features panel and a `QStackedWidget` with the Loomis features and the new `AsaroPanel`.
+  Switching stashes the outgoing model's full state and restores the incoming one, then
+  re-applies the shared transform (scale, position, rotation, stroke, zone colours) so the
+  guide does not jump. Inactive states are persisted in `guides.json` under each guide's
+  `models` key and survive a restart. For Asaro the Guides and Hair tabs are disabled and
+  the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
+- **Qt6 shim** (`qt_compat.py`): every module imports Qt from here. It maps the unscoped
+  enums PyQt6 removed (`Qt.Horizontal`, `QSizePolicy.Expanding`, …), `exec_dialog()` and
+  `activated_index()`. **PyQt5 is tested on Krita 5.3.4.1; PyQt6 is only simulated, not
+  tested on a real Krita 6.**
+- **Quieter undo (mitigation, not a macro)**: the vector-layer redraw debounce goes from
+  40 ms to 220 ms and the canvas sliders flush on `sliderReleased`, so a drag leaves far
+  fewer undo entries. Krita 5.3.4's `krita.pyi` exposes neither `beginUndo`/`endUndo` nor
+  `KUndo2Command`, so a single undo step needs C++ (or a layer swap that Krita groups,
+  which would break `Guide.layer`/`guides.json`). Documented as debt.
+- **Share format**: `model` may be `loomis` or `asaro`; the loader resolves it through the
+  registry. New `heads/example-asaro.json`.
+- **Tests**: 53 unit tests (40 generator + 13 Asaro), plus the offscreen docker check with
+  five tabs, the model combo, the Asaro panel and QAM action discovery.
+- **No light/shadow**: still five tabs (Settings, Move, Guides, Features, Hair); the 0.6.0
+  light stays withdrawn.

@@ -7,13 +7,23 @@ from __future__ import annotations
 import copy
 import math
 
-from PyQt5.QtCore import QByteArray, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter
-from PyQt5.QtSvg import QSvgRenderer
-from PyQt5.QtWidgets import QWidget
+from .qt_compat import QByteArray, QColor, QPainter, QSvgRenderer, QWidget, Qt, pyqtSignal
 
 from .euclid import Vector3
 from .linalg import q_axis_angle, q_identity, q_mul, q_normalize
+
+
+def event_xy(event):
+    """``(x, y)`` del raton como floats, en PyQt5 y PyQt6.
+
+    Qt6 elimina ``pos()/x()/y()`` y deja ``position()``. El PyQt5 que trae
+    Krita 5.3.4 (5.15.11) **no** expone ``position()`` pero si ``localPos()``,
+    que devuelve el mismo ``QPointF`` en coordenadas del widget. Se resuelve
+    por evento porque el binding depende de la version en tiempo de ejecucion.
+    """
+    position = getattr(event, "position", None)
+    point = position() if position is not None else event.localPos()
+    return float(point.x()), float(point.y())
 
 
 class HeadPreviewWidget(QWidget):
@@ -78,7 +88,8 @@ class HeadPreviewWidget(QWidget):
 
     def mousePressEvent(self, event) -> None:
         if event.button() in (Qt.LeftButton, Qt.RightButton):
-            self._start = event.pos()
+            # Qt6 mueve la posicion a ``position()``; el helper cubre PyQt5.
+            self._start = event_xy(event)
             self._q_start = self._q
             self._roll = bool(event.button() == Qt.RightButton or event.modifiers() & Qt.ShiftModifier)
             self.setCursor(Qt.ClosedHandCursor)
@@ -90,12 +101,13 @@ class HeadPreviewWidget(QWidget):
         if self._start is None or self._q_start is None:
             super().mouseMoveEvent(event)
             return
+        x, y = event_xy(event)
         if self._roll:
-            angle = (event.x() - self._start.x()) * 0.01
+            angle = (x - self._start[0]) * 0.01
             delta = q_axis_angle([0.0, 0.0, 1.0], angle)
         else:
-            v0 = self._project(self._start.x(), self._start.y())
-            v1 = self._project(event.x(), event.y())
+            v0 = self._project(self._start[0], self._start[1])
+            v1 = self._project(x, y)
             delta = self._rotation(v0, v1)
         self._q = q_normalize(q_mul(delta, self._q_start))
         self.orientation_changed.emit(self._q)

@@ -3,18 +3,19 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
+import copy
 import json
 import math
 import os
 from pathlib import Path
 
 from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Extension, Krita
-from PyQt5 import uic
-from PyQt5.QtCore import QDateTime, QSignalBlocker, QStandardPaths, QTimer, Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (
+from .qt_compat import (
+    EXPANDING,
+    QColor,
     QColorDialog,
     QComboBox,
+    QDateTime,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -23,17 +24,26 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
-    QSizePolicy,
+    QSignalBlocker,
     QSlider,
+    QStackedWidget,
+    QStandardPaths,
     QTabWidget,
+    QTimer,
     QVBoxLayout,
     QWidget,
+    Qt,
+    activated_index,
+    activated_text,
+    exec_dialog,
+    uic,
 )
 
 from . import i18n
-from .features_dialog import FeaturePanel, HairPanel
+from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
 from .preview import HeadPreviewWidget
 from .i18n import t
+from .models import DEFAULT_MODEL, create_model, supported_models
 from .linalg import (
     angles_from_quaternion,
     q_axis_angle,
@@ -47,13 +57,16 @@ from .loomis_head_generator import LoomisHead3D
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
-    __slots__ = ("model", "layer", "name", "last_center")
+    __slots__ = ("model", "layer", "name", "last_center", "model_states")
 
     def __init__(self, model, layer, name):
         self.model = model
         self.layer = layer
         self.name = name
         self.last_center = None
+        # Estado completo por modelo (``to_dict``), para que cambiar de Loomis
+        # a Asaro y volver no pierda los campos propios de cada uno.
+        self.model_states = {}
 
 
 class LoomisProportionsDocker(DockWidget):
@@ -71,7 +84,7 @@ class LoomisProportionsDocker(DockWidget):
         self._settings = self._load_settings()
         i18n.set_language(self._settings.get("language") or None)
         self.doc = None
-        self.loomis_head = LoomisHead3D()
+        self.loomis_head = create_model(DEFAULT_MODEL) or LoomisHead3D()
         self.loomis_layer = None
         self.guides = []
         self.active_index = 0
@@ -87,10 +100,18 @@ class LoomisProportionsDocker(DockWidget):
         self._presets_path = self._preset_path()
         self.feature_panel = None
         self.hair_panel = None
+        self.asaro_panel = None
+        self.feature_stack = None
+        self.model_combo = None
+        self.model_label = None
         self._slider_sync = False
         self._characters = []
         self._heads = {}
         self._active_character = ""
+
+        # Estado por modelo cuando no hay guia activa (misma idea que
+        # ``Guide.model_states``).
+        self._model_stash = {}
 
         self.setWindowTitle("Loomis Method Head Guide")
         self.setMinimumSize(320, 420)
@@ -102,9 +123,11 @@ class LoomisProportionsDocker(DockWidget):
         self._refresh_oc_combo()
         self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
         self.hair_panel = HairPanel(self.loomis_head, self.schedule_update, self)
+        self.asaro_panel = AsaroPanel(self.loomis_head, self.schedule_update, self)
         self.transform_group = self._build_transform_panel()
         self.language_group = self._build_language_panel()
         self._build_dashboard()
+        self._set_model_ui(self._current_model_id())
         self.ui.featuresButton.hide()
         self._log_init("init:ok")
 
@@ -115,10 +138,13 @@ class LoomisProportionsDocker(DockWidget):
         self.position_sync_timer.timeout.connect(self.sync_manual_position)
         self.position_sync_timer.start()
 
-        # Coalesce slider drags into one redraw every 40 ms.
+        # Coalesce slider drags into one redraw every 220 ms. Krita 5.3.4 does
+        # not expose beginUndo/endUndo (nor KUndo2Command) to Python, so every
+        # addShapesFromSvg lands in the undo history on its own; spacing the
+        # redraws is the only mitigation available from the plugin side.
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
-        self._redraw_timer.setInterval(40)
+        self._redraw_timer.setInterval(220)
         self._redraw_timer.timeout.connect(self.draw_lines_with_vectors)
 
         self._state_timer = QTimer(self)
@@ -264,27 +290,31 @@ class LoomisProportionsDocker(DockWidget):
                 active = 0
             self._set_active_guide(max(0, min(active, len(self.guides) - 1)))
         else:
-            self.loomis_head = LoomisHead3D()
+            model, model_id = self._fresh_model()
+            self.loomis_head = model
             self.loomis_layer = None
             self.active_index = 0
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
-            if self.feature_panel is not None:
-                self.feature_panel.set_model(self.loomis_head)
-            if self.hair_panel is not None:
-                self.hair_panel.set_model(self.loomis_head)
+            self._sync_panels_for_model(model_id)
         self._save_doc_state()
 
     def _load_guides(self, doc, saved: dict) -> None:
         layers = self._find_guide_layers(doc)
         states = {}
         centers = {}
+        model_states = {}
         if isinstance(saved, dict):
             for item in saved.get("guides", []):
                 if isinstance(item, dict) and item.get("name"):
-                    states[str(item["name"])] = item.get("state")
-                    centers[str(item["name"])] = item.get("center")
+                    name = str(item["name"])
+                    states[name] = item.get("state")
+                    centers[name] = item.get("center")
+                    # Estados de los modelos inactivos (el activo esta en
+                    # ``state``); si falta o no es dict, la guia arranca vacia.
+                    extra = item.get("models")
+                    model_states[name] = extra if isinstance(extra, dict) else {}
 
         legacy = []
         for layer in layers:
@@ -345,8 +375,12 @@ class LoomisProportionsDocker(DockWidget):
                 except (AttributeError, RuntimeError, TypeError):
                     pass
             used.add(name)
-            model = LoomisHead3D()
             state = states.get(name)
+            model = None
+            if isinstance(state, dict):
+                model = create_model(state.get("model", DEFAULT_MODEL))
+            if model is None:
+                model = create_model(DEFAULT_MODEL) or LoomisHead3D()
             if isinstance(state, dict):
                 model.from_dict(state)
                 self._apply_state_position(model, doc, state)
@@ -377,6 +411,7 @@ class LoomisProportionsDocker(DockWidget):
                 guide_center = (saved_x, saved_y) if saved_x is not None else None
             guide = Guide(model, layer, name)
             guide.last_center = guide_center
+            guide.model_states = model_states.get(name) or {}
             self.guides.append(guide)
 
     def _create_guide(self, doc) -> None:
@@ -391,7 +426,7 @@ class LoomisProportionsDocker(DockWidget):
             root.addChildNode(layer, None)
         except (AttributeError, RuntimeError, TypeError):
             return
-        model = LoomisHead3D()
+        model = create_model(self._current_model_id()) or create_model(DEFAULT_MODEL)
         if self.loomis_head is not None:
             model.from_dict(self.loomis_head.to_dict())
         model.set_position_x(doc.width() / 2.0)
@@ -431,10 +466,7 @@ class LoomisProportionsDocker(DockWidget):
         self.loomis_head = guide.model
         self.loomis_layer = guide.layer
         self._last_layer_bounds_center = guide.last_center
-        if self.feature_panel is not None:
-            self.feature_panel.set_model(self.loomis_head)
-        if self.hair_panel is not None:
-            self.hair_panel.set_model(self.loomis_head)
+        self._sync_panels_for_model()
         try:
             if self.doc is not None:
                 self.doc.setActiveNode(guide.layer)
@@ -481,17 +513,15 @@ class LoomisProportionsDocker(DockWidget):
         if self.guides:
             self._set_active_guide(min(self.active_index, len(self.guides) - 1))
         else:
-            self.loomis_head = LoomisHead3D()
+            model, model_id = self._fresh_model()
+            self.loomis_head = model
             self.loomis_layer = None
             self.active_index = 0
             self.trackball.set_model(self.loomis_head)
             self._refresh_guide_combo()
             self._sync_ui_from_model()
             self._sync_euler_from_model()
-            if self.feature_panel is not None:
-                self.feature_panel.set_model(self.loomis_head)
-            if self.hair_panel is not None:
-                self.hair_panel.set_model(self.loomis_head)
+            self._sync_panels_for_model(model_id)
             self.schedule_update()
         self._save_doc_state()
 
@@ -525,6 +555,15 @@ class LoomisProportionsDocker(DockWidget):
                 data["positionY"] = guide.model.position_y / height
                 data["positionUnit"] = "normalized"
             entry = {"name": guide.name, "state": data}
+            # Estados de los modelos inactivos de esta guia: el activo ya va en
+            # ``state``. Copia profunda para que el JSON no comparta referencias
+            # con ``guide.model_states``, que se reescribe en cada cambio.
+            active_id = self._model_id_of(guide.model)
+            entry["models"] = {
+                key: copy.deepcopy(value)
+                for key, value in guide.model_states.items()
+                if key != active_id and isinstance(value, dict)
+            }
             if guide.last_center and width and height:
                 entry["center"] = [guide.last_center[0] / width, guide.last_center[1] / height]
             entries.append(entry)
@@ -549,15 +588,13 @@ class LoomisProportionsDocker(DockWidget):
             self._doc_key = None
             self.guides = []
             self.active_index = 0
-            self.loomis_head = LoomisHead3D()
+            model, model_id = self._fresh_model()
+            self.loomis_head = model
             self.loomis_layer = None
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
-            if self.feature_panel is not None:
-                self.feature_panel.set_model(self.loomis_head)
-            if self.hair_panel is not None:
-                self.hair_panel.set_model(self.loomis_head)
+            self._sync_panels_for_model(model_id)
             self._refresh_guide_combo()
             return
         key = doc.fileName() or f"unsaved:{id(doc)}"
@@ -605,7 +642,7 @@ class LoomisProportionsDocker(DockWidget):
         def apply_color(col: QColor):
             if not col.isValid():
                 return
-            hex_rgb = col.name(QColor.HexRgb)
+            hex_rgb = col.name()
             self.loomis_head.set_stroke_color(hex_rgb)
             self.ui.strokeColorSwatch.setStyleSheet(f"background-color: {hex_rgb}; border: 1px solid #666;")
             self.schedule_update()
@@ -619,7 +656,7 @@ class LoomisProportionsDocker(DockWidget):
             self.schedule_update()
 
         dlg.rejected.connect(revert)
-        dlg.exec_()
+        exec_dialog(dlg)
 
     def _build_transform_panel(self) -> QGroupBox:
         group = QGroupBox(t("transform.section"))
@@ -667,6 +704,9 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.positionYSpinBox.valueChanged.connect(self._on_pos_y_spin)
         for slider in (self.rotXSlider, self.rotYSlider, self.rotZSlider):
             slider.valueChanged.connect(self._on_rot_slider)
+        for slider in (self.posXSlider, self.posYSlider,
+                       self.rotXSlider, self.rotYSlider, self.rotZSlider):
+            slider.sliderReleased.connect(self._redraw_now)
         return group
 
     def _refresh_transform_ranges(self) -> None:
@@ -819,6 +859,15 @@ class LoomisProportionsDocker(DockWidget):
             self.ui.viewCombo.blockSignals(False)
         if hasattr(self, "_characters"):
             self._refresh_oc_combo()
+        if self.model_label is not None:
+            self.model_label.setText(t("model.label"))
+        if self.model_combo is not None:
+            self.model_combo.blockSignals(True)
+            for index in range(self.model_combo.count()):
+                model_id = self.model_combo.itemData(index)
+                if model_id:
+                    self.model_combo.setItemText(index, t("model." + str(model_id)))
+            self.model_combo.blockSignals(False)
 
     def connect_ui(self):
         ui_path = os.path.join(os.path.dirname(__file__), "ui", "LoomisDocker.ui")
@@ -836,7 +885,7 @@ class LoomisProportionsDocker(DockWidget):
         self.trackball = HeadPreviewWidget(self.loomis_head, host)
         lay = QVBoxLayout(host)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.trackball.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.trackball.setSizePolicy(EXPANDING, EXPANDING)
         lay.addWidget(self.trackball)
 
         self.trackball.orientation_changed.connect(self._on_preview_rotation)
@@ -852,6 +901,17 @@ class LoomisProportionsDocker(DockWidget):
             lambda v: self.with_schedule_update(lambda: self.loomis_head.set_front_line_stroke(v))
         )
         self.ui.backStrokeSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_back_line_stroke(v)))
+        # Releasing a canvas slider redraws at once instead of waiting out the
+        # debounce; the 3D preview keeps updating live in valueChanged.
+        for slider in (
+            self.ui.sizeSlider,
+            self.ui.sideCutSlider,
+            self.ui.faceAgeSlider,
+            self.ui.chinWidthSlider,
+            self.ui.frontStrokeSlider,
+            self.ui.backStrokeSlider,
+        ):
+            slider.sliderReleased.connect(self._redraw_now)
 
         self.ui.showArrow.toggled.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_arrow(v)))
         self.ui.zoneColors.toggled.connect(self._set_zone_colors)
@@ -938,7 +998,12 @@ class LoomisProportionsDocker(DockWidget):
         self.guides_page, self.guides_page_layout = self._page(self.ui.groupGuides)
         self.tabs.addTab(self.guides_page, t("tabs.guides"))
 
-        self.feature_page, self.feature_page_layout = self._page(self.feature_panel)
+        self.feature_stack = QStackedWidget()
+        self.feature_stack.addWidget(self.feature_panel)
+        self.feature_stack.addWidget(self.asaro_panel)
+        self.feature_page, self.feature_page_layout = self._page(self.feature_stack)
+        model_row = self._build_model_row()
+        self.feature_page_layout.insertWidget(0, model_row)
         self.tabs.addTab(self.feature_page, t("tabs.features"))
 
         self.hair_page, self.hair_page_layout = self._page(self.hair_panel)
@@ -957,6 +1022,221 @@ class LoomisProportionsDocker(DockWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(content)
         return scroll, layout
+
+    # --- modelos (Loomis / Asaro) -----------------------------------------
+    def _model_id_of(self, model) -> str:
+        """Identificador de un modelo; cae en Loomis si no se reconoce."""
+        if model is None:
+            return DEFAULT_MODEL
+        model_id = getattr(model, "model_id", None)
+        if not model_id:
+            try:
+                model_id = model.to_dict().get("model")
+            except (AttributeError, TypeError, ValueError):
+                model_id = None
+        model_id = str(model_id or DEFAULT_MODEL).strip().lower()
+        return model_id if model_id in supported_models() else DEFAULT_MODEL
+
+    def _current_model_id(self) -> str:
+        """Identificador del modelo activo; cae en Loomis si no se reconoce."""
+        return self._model_id_of(getattr(self, "loomis_head", None))
+
+    def _state_owner(self, guide=None):
+        """Guia que guarda el estado; la activa si no se indica otra."""
+        return guide if guide is not None else self.active_guide()
+
+    def _stash_model(self, model, guide=None) -> None:
+        """Guarda ``model.to_dict()`` en el stash de la guia (o el global)."""
+        if model is None:
+            return
+        try:
+            state = model.to_dict()
+        except (AttributeError, TypeError, ValueError):
+            return
+        model_id = self._model_id_of(model)
+        owner = self._state_owner(guide)
+        if owner is not None:
+            owner.model_states[model_id] = state
+        else:
+            self._model_stash[model_id] = state
+
+    def _restore_model_state(self, model_id: str, guide=None):
+        """Estado guardado del modelo: el de la guia, o el global sin guia.
+
+        Con guia activa no se cae al stash global a proposito: ese estado
+        puede venir de otro documento y traeria una posicion en pixeles ajena.
+        """
+        model_id = str(model_id or "").strip().lower()
+        owner = self._state_owner(guide)
+        if owner is not None:
+            return owner.model_states.get(model_id)
+        return self._model_stash.get(model_id)
+
+    # Campos que no son de un modelo concreto: transformacion y aspecto del
+    # trazo. Se copian siempre del modelo saliente al entrante para que la guia
+    # no salte de sitio al cambiar de modelo.
+    _COMMON_STATE_FIELDS = (
+        ("scale", "set_scale"),
+        ("position_x", "set_position_x"),
+        ("position_y", "set_position_y"),
+        ("q", "set_quaternion"),
+        ("stroke_color", "set_stroke_color"),
+        ("front_line_stroke", "set_front_line_stroke"),
+        ("back_line_stroke", "set_back_line_stroke"),
+        ("use_zone_colors", "set_zone_colors"),
+    )
+
+    def _copy_common_state(self, source, target) -> None:
+        """Copia transformacion/trazos de ``source`` a ``target``."""
+        if source is None or target is None:
+            return
+        for attr, setter_name in self._COMMON_STATE_FIELDS:
+            if not hasattr(source, attr) or not hasattr(target, attr):
+                continue
+            value = getattr(source, attr)
+            setter = getattr(target, setter_name, None)
+            if setter is None:
+                setattr(target, attr, value)
+                continue
+            try:
+                setter(value)
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+    def _switch_model(self, model_id: str, guide=None):
+        """Cambia el modelo activo conservando el estado de cada modelo.
+
+        Guarda el estado completo del modelo saliente y restaura el del
+        entrante si ya se habia usado. Despues **siempre** reaplica los campos
+        comunes del saliente: el stash solo aporta lo propio de cada modelo
+        (``head_sex``, ``cranium``, ``show_planes``, ``detail``...), asi que
+        mover/rotar/escalar y cambiar de modelo no devuelve la transformacion
+        vieja del stash.
+        """
+        model_id = str(model_id or "").strip().lower()
+        new = create_model(model_id)
+        if new is None:
+            return None
+        owner = self._state_owner(guide)
+        old = self.loomis_head
+        state = self._restore_model_state(model_id, owner)
+        if old is not None:
+            self._stash_model(old, owner)
+        if state is not None:
+            try:
+                new.from_dict(state)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        elif old is not None:
+            # Primera vez con este modelo: cada clase ignora las claves que no
+            # conoce (p. ej. showPlanes al volver a Loomis).
+            try:
+                new.from_dict(old.to_dict())
+            except (AttributeError, TypeError, ValueError):
+                pass
+        self._copy_common_state(old, new)
+        if owner is not None:
+            owner.model = new
+        self.loomis_head = new
+        self.trackball.set_model(new)
+        self._sync_panels_for_model(model_id)
+        self._sync_ui_from_model()
+        self._sync_euler_from_model()
+        self.schedule_update()
+        return new
+
+    def _fresh_model(self):
+        """Nueva instancia del modelo activo y su id (Loomis como respaldo)."""
+        model_id = self._current_model_id()
+        model = create_model(model_id)
+        if model is None:
+            model_id = DEFAULT_MODEL
+            model = create_model(model_id) or LoomisHead3D()
+        return model, model_id
+
+    def _loomis_model(self):
+        """Instancia Loomis para construir paneles que solo existen en Loomis."""
+        return create_model(DEFAULT_MODEL) or LoomisHead3D()
+
+    def _sync_panels_for_model(self, model_id: str | None = None) -> None:
+        """Alinea combo/stack y los paneles con el modelo activo.
+
+        Los paneles de rasgos y pelo son exclusivos de Loomis: con Asaro se
+        ocultan (el stack muestra AsaroPanel) y no se tocan.
+        """
+        model_id = model_id or self._current_model_id()
+        self._set_model_ui(model_id)
+        if model_id == "asaro":
+            if self.asaro_panel is not None:
+                self.asaro_panel.set_model(self.loomis_head)
+            return
+        if self.feature_panel is not None:
+            self.feature_panel.set_model(self.loomis_head)
+        if self.hair_panel is not None:
+            self.hair_panel.set_model(self.loomis_head)
+
+    def _set_model_ui(self, model_id: str) -> None:
+        """Combo, stack de Rasgos, pestanas y filas Loomis-only segun modelo."""
+        is_asaro = model_id == "asaro"
+        if self.model_combo is not None:
+            index = self.model_combo.findData(model_id)
+            if index >= 0 and index != self.model_combo.currentIndex():
+                self.model_combo.blockSignals(True)
+                self.model_combo.setCurrentIndex(index)
+                self.model_combo.blockSignals(False)
+        if self.feature_stack is not None:
+            self.feature_stack.setCurrentIndex(1 if is_asaro else 0)
+        if hasattr(self, "tabs"):
+            for tab in (2, 4):  # Guias y Pelo
+                if tab < self.tabs.count():
+                    self.tabs.setTabEnabled(tab, not is_asaro)
+        # Filas de Ajustes que solo existen en Loomis.
+        for name in (
+            "labelSideCut", "sideCutSlider",
+            "labelFaceAge", "faceAgeSlider",
+            "labelChinWidth", "chinWidthSlider",
+        ):
+            widget = getattr(self.ui, name, None)
+            if widget is not None:
+                widget.setVisible(not is_asaro)
+
+    def _build_model_row(self) -> QWidget:
+        """Fila con el combo de modelo, encima del panel de Rasgos."""
+        box = QWidget()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.model_label = QLabel(t("model.label"))
+        self.model_combo = QComboBox()
+        for model_id in supported_models():
+            self.model_combo.addItem(t("model." + model_id), model_id)
+        current = self.model_combo.findData(self._current_model_id())
+        if current >= 0:
+            self.model_combo.setCurrentIndex(current)
+        activated_index(self.model_combo).connect(self._on_model_changed)
+        row.addWidget(self.model_label)
+        row.addWidget(self.model_combo, 1)
+        return box
+
+    def _on_model_changed(self, index: int) -> None:
+        """Cambia el modelo activo conservando el estado de cada modelo."""
+        if self.model_combo is None:
+            return
+        model_id = str(self.model_combo.itemData(index) or "").strip().lower()
+        if not model_id:
+            return
+        if model_id == self._current_model_id():
+            self._set_model_ui(model_id)
+            return
+        if self._switch_model(model_id) is None:
+            self.ui.presetStatus.setText(t("error.model_unknown", model=model_id))
+            previous = self.model_combo.findData(self._current_model_id())
+            if previous >= 0:
+                self.model_combo.blockSignals(True)
+                self.model_combo.setCurrentIndex(previous)
+                self.model_combo.blockSignals(False)
+            return
+        self._save_doc_state()
+        self.ui.presetStatus.setText(t("status.model_switched", model=t("model." + model_id)))
 
     def schedule_update(self):
         self.trackball.update()
@@ -1027,6 +1307,20 @@ class LoomisProportionsDocker(DockWidget):
         if hasattr(self, "_state_timer"):
             self._state_timer.start()
 
+    def _redraw_now(self, *_args) -> None:
+        """Flush a pending redraw at once (slider released)."""
+        if hasattr(self, "_redraw_timer"):
+            self._redraw_timer.stop()
+        self.update_scheduled = False
+        self.draw_lines_with_vectors()
+
+    # Limitation: Krita 5.3.4's krita.pyi exposes neither beginUndo/endUndo nor
+    # KUndo2Command, so the plugin cannot open an undo macro around this call.
+    # Each redraw (shape.remove + addShapesFromSvg) therefore leaves its own
+    # entries in the undo history. Mitigation only: space the redraws out
+    # (220 ms debounce, immediate flush on sliderReleased). Grouping them into a
+    # single undo step needs C++ (or a layer swap Krita groups, which would break
+    # Guide.layer/guides.json) and stays as debt.
     def draw_lines_with_vectors(self, samples: int = 512):
         if not self.doc:
             self.update_scheduled = False
@@ -1123,10 +1417,10 @@ class LoomisProportionsDocker(DockWidget):
         os.replace(temp, self._presets_path)
 
     def _bind_library(self) -> None:
-        self.ui.presetCombo.activated[str].connect(self._on_preset_activated)
+        activated_text(self.ui.presetCombo).connect(self._on_preset_activated)
         self.ui.presetSaveButton.clicked.connect(self._save_preset)
         self.ui.presetDeleteButton.clicked.connect(self._delete_preset)
-        self.ui.ocCombo.activated[int].connect(self._on_oc_activated)
+        activated_index(self.ui.ocCombo).connect(self._on_oc_activated)
         self.ui.ocSaveButton.clicked.connect(self._save_to_character)
         self.ui.headLoadButton.clicked.connect(self._load_head_file)
         self.ui.headSaveButton.clicked.connect(self._export_head_file)
@@ -1136,8 +1430,8 @@ class LoomisProportionsDocker(DockWidget):
             self.ui.viewCombo.addItem(t(key))
         self.ui.viewCombo.setCurrentIndex(0)
         self.ui.viewCombo.blockSignals(False)
-        self.ui.viewCombo.activated[int].connect(self._apply_view)
-        self.ui.guideCombo.activated[int].connect(self._on_guide_selected)
+        activated_index(self.ui.viewCombo).connect(self._apply_view)
+        activated_index(self.ui.guideCombo).connect(self._on_guide_selected)
         self.ui.guideNewButton.clicked.connect(self._new_guide)
         self.ui.guideDeleteButton.clicked.connect(self._delete_guide)
         for spin in (self.ui.rotXSpin, self.ui.rotYSpin, self.ui.rotZSpin):
@@ -1190,7 +1484,7 @@ class LoomisProportionsDocker(DockWidget):
         code = self._settings.get("language") or ""
         index = self.languageCombo.findData(code)
         self.languageCombo.setCurrentIndex(index if index >= 0 else 0)
-        self.languageCombo.activated[int].connect(self._on_language_changed)
+        activated_index(self.languageCombo).connect(self._on_language_changed)
         form.addRow(self.languageLabel, self.languageCombo)
         return group
 
@@ -1203,29 +1497,44 @@ class LoomisProportionsDocker(DockWidget):
         self._reload_localized_panels()
 
     def _reload_localized_panels(self) -> None:
-        replacements = (
-            ("feature_panel", "feature_page_layout",
-             lambda: FeaturePanel(self.loomis_head, self.schedule_update, self)),
-            ("hair_panel", "hair_page_layout",
-             lambda: HairPanel(self.loomis_head, self.schedule_update, self)),
-            ("transform_group", "transform_page_layout", self._build_transform_panel),
-        )
-        for attr, layout_attr, builder in replacements:
-            layout = getattr(self, layout_attr, None)
-            if layout is None:
-                continue
-            old = getattr(self, attr, None)
+        """Recrea los paneles traducidos tras cambiar de idioma."""
+        if self.feature_stack is not None:
+            old_feature = self.feature_panel
+            old_asaro = self.asaro_panel
+            if old_feature is not None:
+                self.feature_stack.removeWidget(old_feature)
+            if old_asaro is not None:
+                self.feature_stack.removeWidget(old_asaro)
+            self.feature_panel = FeaturePanel(self._loomis_model(), self.schedule_update, self)
+            self.asaro_panel = AsaroPanel(self.loomis_head, self.schedule_update, self)
+            self.feature_stack.insertWidget(0, self.feature_panel)
+            self.feature_stack.insertWidget(1, self.asaro_panel)
+            for old in (old_feature, old_asaro):
+                if old is not None:
+                    old.deleteLater()
+        if self.hair_panel is not None and hasattr(self, "hair_page_layout"):
+            self.hair_page_layout.removeWidget(self.hair_panel)
+            self.hair_panel.deleteLater()
+            self.hair_panel = HairPanel(self._loomis_model(), self.schedule_update, self)
+            self.hair_page_layout.insertWidget(0, self.hair_panel)
+        if hasattr(self, "transform_page_layout"):
+            old = getattr(self, "transform_group", None)
             if old is not None:
-                layout.removeWidget(old)
+                self.transform_page_layout.removeWidget(old)
                 old.deleteLater()
-            new = builder()
-            layout.insertWidget(0, new)
-            setattr(self, attr, new)
+            self.transform_group = self._build_transform_panel()
+            self.transform_page_layout.insertWidget(0, self.transform_group)
+        if self.model_label is not None:
+            self.model_label.setText(t("model.label"))
+        if self.model_combo is not None:
+            self.model_combo.blockSignals(True)
+            for index in range(self.model_combo.count()):
+                model_id = self.model_combo.itemData(index)
+                if model_id:
+                    self.model_combo.setItemText(index, t("model." + str(model_id)))
+            self.model_combo.blockSignals(False)
         self.ui.featuresButton.hide()
-        if self.feature_panel is not None:
-            self.feature_panel.set_model(self.loomis_head)
-        if self.hair_panel is not None:
-            self.hair_panel.set_model(self.loomis_head)
+        self._sync_panels_for_model()
         self._sync_ui_from_model()
         self._sync_euler_from_model()
 
@@ -1385,6 +1694,12 @@ class LoomisProportionsDocker(DockWidget):
             self.ui.presetStatus.setText(t("status.missing", name=name))
 
     def apply_preset(self, data: dict) -> None:
+        data = data if isinstance(data, dict) else {}
+        target = str(data.get("model") or self._current_model_id() or DEFAULT_MODEL).strip().lower()
+        if target not in supported_models():
+            target = self._current_model_id()
+        if target != self._current_model_id():
+            self._switch_model(target)
         self.loomis_head.from_dict(data)
         doc, width, height = self._doc_size()
         normalized = data.get("positionUnit") == "normalized"
@@ -1399,10 +1714,7 @@ class LoomisProportionsDocker(DockWidget):
         self.trackball.set_quaternion(self.loomis_head.q)
         self._sync_ui_from_model()
         self._sync_euler_from_model()
-        if self.feature_panel is not None:
-            self.feature_panel.sync_from_model()
-        if self.hair_panel is not None:
-            self.hair_panel.sync_from_model()
+        self._sync_panels_for_model()
         self.schedule_update()
 
     def _sync_ui_from_model(self) -> None:
@@ -1504,10 +1816,18 @@ class LoomisProportionsDocker(DockWidget):
         if not isinstance(data, dict) or ("head" not in raw and "scale" not in data):
             self.ui.presetStatus.setText(t("error.bad_head"))
             return
-        model = str(raw.get("model") or raw.get("generator") or data.get("model") or "loomis").lower()
-        if model not in ("loomis", "loomis-head", ""):
-            self.ui.presetStatus.setText(t("error.head_model", model=model))
+        model = str(
+            raw.get("model") or data.get("model")
+            or raw.get("generator") or data.get("generator") or DEFAULT_MODEL
+        ).strip().lower()
+        # Nombres antiguos del generador que siguen significando Loomis.
+        if model in ("", "loomis-head", "loomis method head guide"):
+            model = DEFAULT_MODEL
+        if create_model(model) is None:
+            self.ui.presetStatus.setText(t("error.model_unknown", model=model))
             return
+        data = dict(data)
+        data["model"] = model
         self.apply_preset(data)
         self.ui.presetStatus.setText(t("status.head_loaded", name=Path(path).name))
 
@@ -1518,16 +1838,18 @@ class LoomisProportionsDocker(DockWidget):
             self, t("file.save_title"), suggested, t("file.filter"))
         if not path:
             return
+        head = self._capture_preset()
+        model_id = str(head.get("model") or DEFAULT_MODEL)
         wrapper = {
             "format": "loomis-head",
             "version": 1,
-            "model": "loomis",
-            "generator": "Loomis Method Head Guide",
+            "model": model_id,
+            "generator": str(head.get("generator") or model_id),
             "name": name,
             "author": "",
             "license": "",
             "tags": [],
-            "head": self._capture_preset(),
+            "head": head,
         }
         try:
             Path(path).write_text(json.dumps(wrapper, ensure_ascii=False, indent=2), encoding="utf-8")

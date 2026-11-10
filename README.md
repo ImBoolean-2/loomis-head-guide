@@ -29,6 +29,10 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 - **Tabbed docker**: the head, 3D preview, view selector, library and action buttons stay
   fixed; Settings, Move, Guides, Features and Hair live in scrollable tabs.
+- **Two head models**: a **Model** combo switches between the **Loomis** construction and a
+  low-poly **Asaro** planar head (face contours with planes, edges and detail level). Each
+  model keeps its own state, so switching back and forth does not lose features or hair,
+  and the shared position, rotation, scale and stroke follow the guide.
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
@@ -58,6 +62,9 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   `license`, `tags`, `head`). See [`heads/`](heads/README.md).
 - **Languages**: English, Spanish, Portuguese and French with a language selector in the
   panel; the choice is remembered.
+- **Qt5/Qt6 ready**: all Qt imports go through `qt_compat.py`, which also maps the enums
+  PyQt6 removed. Tested on PyQt5 (Krita 5.3.4.1); PyQt6 is implemented but not tested on a
+  real Krita 6.
 - **Standalone or integrated**: works on its own; if
   [Grimoire of Color](https://github.com/ImBoolean-2/color-grimoire) is installed it can
   also save the head into the active OC.
@@ -66,7 +73,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.6.1.zip`.
+1. Download `release/loomis-head-guide-0.7.0.zip`.
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -83,7 +90,16 @@ cp -r loomis_head loomis_head.desktop \
   ~/.var/app/org.kde.krita/data/krita/pykrita/
 ```
 
-Tested with Krita **5.3.4.1** (Flatpak, PyQt5). Krita 6 (PyQt6) is not supported yet.
+Tested with Krita **5.3.4.1** (Flatpak, PyQt5). The plugin imports Qt through
+`qt_compat.py` and is prepared for **Krita 6 / PyQt6**, but that combination has only been
+simulated, not run on a real Krita 6.
+
+## Undo
+
+Krita 5.3.4's Python API does not expose `beginUndo`/`endUndo` or `KUndo2Command`, so the
+plugin cannot group a redraw into one undo step. As a mitigation the vector layer redraws
+with a 220 ms debounce and flushes when a slider is released, which keeps a drag to a few
+undo entries instead of dozens. A real single-step undo needs C++ and is tracked as debt.
 
 ## Languages
 
@@ -129,18 +145,19 @@ Use **Export head…** in the Library section. The JSON looks like:
 ```
 
 Put a JSON and a 400×400 preview PNG in `heads/<author>/` (see
-[`heads/README.md`](heads/README.md)). `model` is reserved for future head engines; this
-version only accepts `loomis`.
+[`heads/README.md`](heads/README.md)). `model` is `loomis` or `asaro`; the loader resolves
+it through the model registry and refuses an unknown model with a message. An Asaro head
+uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
 
 ## Development
 
 ```bash
 cd loomis_head
-python3 -m unittest test_generator.py -v
+python3 -m unittest test_generator test_asaro -v
 ```
 
-The 40 generator tests do not need Krita, Qt or PyQt5. The UI/docker needs Krita; load it
-with `Tools → Scripts → Import Python Plugins` or by copying the folder.
+The 53 unit tests (40 generator + 13 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
+needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
 
 Repository layout:
 

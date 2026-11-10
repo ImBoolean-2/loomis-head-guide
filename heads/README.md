@@ -1,8 +1,8 @@
 # Cabezas para compartir
 
-Cada archivo es una cabeza Loomis exportada desde el plugin (**Exportar cabeza…**). Se
-puede cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC
-del Grimorio de Color.
+Cada archivo es una cabeza exportada desde el plugin (**Exportar cabeza…**). Se puede
+cargar con **Cargar cabeza…** y también pegar su bloque `head` en la ficha de un OC del
+Grimorio de Color.
 
 ## Formato
 
@@ -19,10 +19,15 @@ del Grimorio de Color.
 }
 ```
 
-- `model`: solo `loomis` en esta versión. Los modelos futuros (Reilly, Asaro, anime) usarán
-  el mismo envoltorio y el cargador avisará si no los entiende.
-- `head`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
-  caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
+- `model`: `loomis` o `asaro`. El cargador resuelve el modelo con el registro de
+  `loomis_head/models.py` (`create_model`); si no lo entiende, avisa y no carga la cabeza.
+- `head`: el bloque completo del generador que corresponda al `model`.
+  - `loomis`: escala, posición normalizada, rotación (quaternion), cortes, rasgos, pelo,
+    caricatura, colores y toggles. Es el mismo bloque que guarda el Grimorio.
+  - `asaro`: escala, posición, rotación, trazos y color, más `showPlanes` (contornos de
+    planos), `showEdges` (aristas de pliegue y silueta) y `detail` (0 grueso, 1 estándar,
+    2 fino). Los campos de Loomis viajan igual para no romper la interfaz, pero en Asaro
+    no cambian la malla.
 - `author`, `license` y `tags` son libres; sirven para acreditar y filtrar.
 
 ## Convención sugerida
@@ -32,6 +37,7 @@ heads/
 ├── README.md
 ├── example-head.json
 ├── example-head.png     (preview 400x400)
+├── example-asaro.json
 └── <autor>/<nombre>.json
 ```
 

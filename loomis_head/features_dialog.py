@@ -1,16 +1,15 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Paneles de rasgos y pelo del Loomis Head Guide.
+"""Paneles de rasgos, pelo y planos Asaro del Loomis Head Guide.
 
-Se separan en widgets (rasgos y pelo) para que el docker pueda mostrarlos
+Se separan en widgets (rasgos, pelo y Asaro) para que el docker pueda mostrarlos
 en pestanas independientes. Todos trabajan sobre el modelo activo y comparten
 el callback de redibujo.
 """
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (
+from .qt_compat import (
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -19,6 +18,8 @@ from PyQt5.QtWidgets import (
     QSlider,
     QVBoxLayout,
     QWidget,
+    Qt,
+    activated_index,
 )
 
 from .i18n import t
@@ -150,13 +151,13 @@ class FeaturePanel(_ModelPanel):
         self.type_combo = QComboBox()
         for key, _ in HEAD_TYPES:
             self.type_combo.addItem(t(key))
-        self.type_combo.activated[int].connect(self._apply_type)
+        activated_index(self.type_combo).connect(self._apply_type)
         self._form.addRow(t("headtype.label"), self.type_combo)
 
         self.sex_combo = QComboBox()
         self.sex_combo.addItem(t("features.sex.male"))
         self.sex_combo.addItem(t("features.sex.female"))
-        self.sex_combo.activated[int].connect(self._apply_sex)
+        activated_index(self.sex_combo).connect(self._apply_sex)
         self._form.addRow(t("features.sex"), self.sex_combo)
 
         self._section(t("features.section.caricature"))
@@ -339,13 +340,13 @@ class HairPanel(_ModelPanel):
         self.part_combo = QComboBox()
         for key in ("hair.straight", "hair.zigzag", "hair.spiky"):
             self.part_combo.addItem(t(key))
-        self.part_combo.activated[int].connect(self._set_part)
+        activated_index(self.part_combo).connect(self._set_part)
         self._form.addRow(t("hair.part"), self.part_combo)
 
         self.texture_combo = QComboBox()
         for key in ("hair.smooth", "hair.wavy", "hair.texture_spiky", "hair.curly"):
             self.texture_combo.addItem(t(key))
-        self.texture_combo.activated[int].connect(self._set_texture)
+        activated_index(self.texture_combo).connect(self._set_texture)
         self._form.addRow(t("hair.texture"), self.texture_combo)
 
         self.sync_from_model()
@@ -375,4 +376,74 @@ class HairPanel(_ModelPanel):
         self.texture_combo.setCurrentIndex(int(self.model.hair_texture))
         for slider, getter in self._sliders:
             slider.setValue(int(round(getter())))
+        self._syncing = False
+
+
+class AsaroPanel(_ModelPanel):
+    """Planos, aristas y nivel de detalle de la cabeza Asaro."""
+
+    def __init__(self, model, on_change, parent=None):
+        super().__init__(model, on_change, parent)
+        self._flags: list[tuple[QCheckBox, str, bool]] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._form = QFormLayout()
+        outer.addLayout(self._form)
+
+        self.planes_check = self._add_flag(t("asaro.show_planes"), "show_planes", True)
+        self.edges_check = self._add_flag(t("asaro.show_edges"), "show_edges", True)
+
+        self.detail_combo = QComboBox()
+        for key, level in (
+            ("asaro.detail.low", 0),
+            ("asaro.detail.medium", 1),
+            ("asaro.detail.high", 2),
+        ):
+            self.detail_combo.addItem(t(key), level)
+        activated_index(self.detail_combo).connect(self._apply_detail)
+        self._form.addRow(t("asaro.detail"), self.detail_combo)
+
+        self.sync_from_model()
+
+    def _add_flag(self, text: str, attr: str, default: bool) -> QCheckBox:
+        checkbox = QCheckBox(text)
+        checkbox.setChecked(bool(getattr(self.model, attr, default)))
+        # Setter en tiempo de llamada: al cambiar de modelo (set_model) el
+        # checkbox escribe en el modelo activo y no en el de construccion.
+        checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
+        self._form.addRow(checkbox)
+        self._flags.append((checkbox, attr, default))
+        return checkbox
+
+    def _apply_flag(self, attr: str, checked: bool) -> None:
+        if self._syncing:
+            return
+        setter = getattr(self.model, "set_" + attr, None)
+        if setter is not None:
+            setter(checked)
+        self.on_change()
+
+    def _apply_detail(self, index: int) -> None:
+        if self._syncing:
+            return
+        level = self.detail_combo.itemData(index)
+        if level is None:
+            level = index
+        setter = getattr(self.model, "set_detail", None)
+        if setter is not None:
+            setter(int(level))
+        self.on_change()
+
+    def sync_from_model(self) -> None:
+        self._syncing = True
+        for checkbox, attr, default in self._flags:
+            checkbox.setChecked(bool(getattr(self.model, attr, default)))
+        try:
+            detail = int(getattr(self.model, "detail", 1))
+        except (TypeError, ValueError):
+            detail = 1
+        index = self.detail_combo.findData(max(0, min(detail, 2)))
+        self.detail_combo.setCurrentIndex(index if index >= 0 else 1)
         self._syncing = False

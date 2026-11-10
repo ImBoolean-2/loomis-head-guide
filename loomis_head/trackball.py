@@ -6,9 +6,7 @@
 # trackball.py
 import math
 
-from PyQt5.QtCore import QRect, Qt, pyqtSignal
-from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
-from PyQt5.QtWidgets import QWidget
+from .qt_compat import QBrush, QColor, QPainter, QPen, QRect, QWidget, Qt, pyqtSignal
 
 from loomis_head.euclid import Vector3
 
@@ -21,6 +19,7 @@ from .linalg import (
     q_normalize,
     q_to_mat3,
 )
+from .preview import event_xy
 
 
 class TrackballWidget(QWidget):
@@ -44,11 +43,11 @@ class TrackballWidget(QWidget):
         self.setMouseTracking(False)
         self._update_quaternion()
 
-    def _pos_to_forward_vec(self, pos):
+    def _pos_to_forward_vec(self, x, y):
         cx, cy, r = self._center_radius()
         rx = max(r * 0.82, 1.0)
-        x = (pos.x() - cx) / rx
-        y = (cy - pos.y()) / rx  # Y up
+        x = (x - cx) / rx
+        y = (cy - y) / rx  # Y up
         d2 = x * x + y * y
         if d2 <= 1.0:
             z = math.sqrt(max(0.0, 1.0 - d2))
@@ -83,10 +82,10 @@ class TrackballWidget(QWidget):
         r = 0.5 * min(w, h) - 2.0
         return (w * 0.5, h * 0.5, r)
 
-    def _angle_at(self, pos):
+    def _angle_at(self, x, y):
         cx, cy, _ = self._center_radius()
-        x = pos.x() - cx
-        y = cy - pos.y()  # up
+        x = x - cx
+        y = cy - y  # up
         return math.atan2(y, x)
 
     def mousePressEvent(self, e):
@@ -94,8 +93,10 @@ class TrackballWidget(QWidget):
             return super().mousePressEvent(e)
 
         cx, cy, r = self._center_radius()
-        dx = e.x() - cx
-        dy = e.y() - cy
+        # Qt6 elimina ``x()/y()``: ``event_xy`` devuelve floats en ambas.
+        x, y = event_xy(e)
+        dx = x - cx
+        dy = y - cy
         dist = math.hypot(dx, dy)
 
         ring_outer = r
@@ -103,7 +104,7 @@ class TrackballWidget(QWidget):
 
         if ring_inner <= dist <= ring_outer:
             self._mode = "roll"
-            self._theta0 = self._angle_at(e.pos())
+            self._theta0 = self._angle_at(x, y)
             self._roll0 = self.roll
         elif dist <= ring_inner:
             self._mode = "turntable"
@@ -122,13 +123,13 @@ class TrackballWidget(QWidget):
             return super().mouseMoveEvent(e)
 
         if self._mode == "turntable":
-            v = self._pos_to_forward_vec(e.pos())
+            v = self._pos_to_forward_vec(*event_xy(e))
             self.yaw = math.atan2(float(v[0]), float(v[2]))  # right = +yaw
             self.pitch = -math.asin(max(-1.0, min(1.0, float(v[1]))))  # up = +pitch
             self._update_quaternion()
 
         elif self._mode == "roll":
-            th = self._angle_at(e.pos())
+            th = self._angle_at(*event_xy(e))
             dth = th - self._theta0
             if dth > math.pi:
                 dth -= 2 * math.pi

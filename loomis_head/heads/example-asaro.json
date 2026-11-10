@@ -1,0 +1,42 @@
+{
+  "format": "loomis-head",
+  "version": 1,
+  "model": "asaro",
+  "name": "Asaro planos",
+  "author": "imboolean",
+  "license": "CC0-1.0",
+  "tags": [
+    "asaro",
+    "planos",
+    "base"
+  ],
+  "head": {
+    "version": 1,
+    "generator": "asaro",
+    "model": "asaro",
+    "scale": 1.0,
+    "positionX": 0.0,
+    "positionY": 0.0,
+    "rotation": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "showPlanes": true,
+    "showEdges": true,
+    "detail": 1,
+    "frontStroke": 10.0,
+    "backStroke": 7.0,
+    "strokeColor": "#6A54E7",
+    "useZoneColors": false,
+    "sideCut": 0.66,
+    "faceAge": 1.0,
+    "chinWidth": 1.0,
+    "showFace": true,
+    "showArrow": true,
+    "showSilhouette": true,
+    "showSideRims": true,
+    "showSideCross": true
+  }
+}
