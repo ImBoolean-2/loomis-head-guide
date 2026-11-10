@@ -30,11 +30,13 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 - **Tabbed docker**: the head, 3D preview, view selector, library and action buttons stay
   fixed; Settings, Move, Guides, Features and Hair live in scrollable tabs.
 - **Two head models**: a **Model** combo switches between the **Loomis** construction and a
-  low-poly **Asaro** planar head (face contours with planes, edges and detail level). Each
-  model keeps its own state, so switching back and forth does not lose features or hair,
-  and the shared position, rotation, scale and stroke follow the guide. The Asaro mesh was
-  reshaped in 0.7.1 so the **profile** reads too (forehead, brow, socket, nose, cheekbone,
-  jaw, chin and occiput); profile is still its weakest view because the mesh is faceted.
+  low-poly **Asaro** planar bust (face contours with planes, edges, detail level and a
+  neck). Each model keeps its own state, so switching back and forth does not lose features
+  or hair, and the shared position, rotation, scale and stroke follow the guide. As of 0.7.2
+  the Asaro mesh is a proportioned bust — 1.5 high, ear-to-ear ~1.0, crown-to-chin depth
+  0.71 of the head, face 44 % and neck 30 % — with forehead, brow, socket, nose, lips,
+  chin, jaw, ear, occiput and neck, and the **Show neck** toggle. It is still a faceted
+  low-poly reference, not a smooth anatomical sculpt.
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
@@ -75,7 +77,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.1.zip`.
+1. Download `release/loomis-head-guide-0.7.2.zip`.
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -151,6 +153,28 @@ Put a JSON and a 400×400 preview PNG in `heads/<author>/` (see
 it through the model registry and refuses an unknown model with a message. An Asaro head
 uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
 
+## Asaro head
+
+The second model is a low-poly study of the **Asaro head** (the planar head used to learn
+the planes of the face). It is drawn as face contours, not as a shaded sculpt:
+
+- **Proportions**: bust height 1.5, ear-to-ear width ~1.01 (height/width 1.485),
+  crown-to-chin depth 0.75 (0.714 of the head height), face (brow→chin) 44 % of the height
+  and neck/base 30 %.
+- **Planes**: crown, forehead, brow, orbital socket, nose (nasion, dorsum, tip, base),
+  maxilla, upper and lower lip, mental groove, chin, jaw, ear, occiput and neck. The ear is
+  a lateral wedge at brow/nose height and the nape curves into the neck.
+- **Neck**: **Show neck** in the Asaro panel (`showNeck` in JSON, on by default). With it
+  off the jaw is capped and the head stays a closed solid.
+- **Controls**: planes, edges and detail (0 coarse, 1 standard, 2 fine) give 60 / 80 / 100
+  faces; no light or shadow.
+- **References**: the mesh was rebuilt against the official Asaro 3/4, front and group
+  views plus male/female bust proportion references; `heads/example-asaro.json` is the
+  shareable sample.
+
+It is deliberately a **faceted reference**: the cranium is still boxy, the ear is a wedge
+and every silhouette is a chain of segments. Use it to place planes, then draw over it.
+
 ## Development
 
 ```bash
@@ -158,7 +182,7 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The 63 unit tests (40 generator + 23 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
+The 73 unit tests (40 generator + 33 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
 needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
 
 Repository layout:

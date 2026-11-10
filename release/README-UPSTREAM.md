@@ -1,7 +1,7 @@
-# Loomis Head Guide 0.7.1 — handoff notes
+# Loomis Head Guide 0.7.2 — handoff notes
 
 For **Nedeljko Umjetnik**, upstream author of the Loomis Method Head Guide. This fork
-starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.1.md`
+starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.2.md`
 explains the diff; this file is the short version: what you get, what to watch out for and
 how to try it.
 
@@ -29,12 +29,18 @@ how to try it.
    forehead, brow, socket, nose, cheekbone, jaw, chin and occiput, with measured landmarks
    (nose tip and nasion step, socket depth, chin/lip step, rounded occiput and nape). Faces
    go to 32 / 62 / 68 at detail 0 / 1 / 2.
+9. **Asaro bust with neck** (0.7.2): the mesh is rebuilt as a proportioned bust — height
+   1.5, ear-to-ear ~1.01 (ratio 1.485), crown-to-chin depth 0.714 of the head, face 44 % and
+   neck 30 % — with forehead, brow, socket, nose, lips, chin, jaw, ear, occiput and neck,
+   plus a **Show neck** toggle (`showNeck`, on by default) that caps the jaw when off.
+   60 / 80 / 100 faces at detail 0 / 1 / 2. It is still a faceted plane study.
 
 ## Compatibility
 
 - **Head JSON**: 0.5.1, 0.6.0 and 0.6.1 heads load unchanged; missing keys fall back to
   defaults. Asaro heads use the same wrapper with `"model": "asaro"` and
-  `generator: "asaro"` inside `head`.
+  `generator: "asaro"` inside `head`; a 0.7.1 Asaro head without `showNeck` loads with the
+  neck on.
 - **Share format**: `format: "loomis-head"`, `model` is now `loomis` **or** `asaro`. The
   loader resolves the model through `create_model()`; an unknown model is reported and the
   head is not loaded.
@@ -46,14 +52,14 @@ how to try it.
 ## How to test
 
 ```bash
-# 1. Unit tests, no Krita/Qt needed (63 tests: 40 Loomis + 23 Asaro)
+# 1. Unit tests, no Krita/Qt needed (73 tests: 40 Loomis + 33 Asaro)
 cd loomis_head
 python3 -m unittest test_generator test_asaro
 
 # 2. Install
 cp -r loomis_head loomis_head.desktop \
   ~/.var/app/org.kde.krita/data/krita/pykrita/
-# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.1.zip
+# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.2.zip
 ```
 
 Then in Krita:
@@ -61,6 +67,7 @@ Then in Krita:
 1. Enable the docker and check the **Model** combo says *Loomis*.
 2. Rotate/move/scale the head, switch to **Asaro**: the guide keeps its place and size.
 3. In Asaro, toggle **planes** and **edges** and change **detail**; the mesh contours change.
+   Toggle **Show neck**: the bust gains or loses the neck and the head stays closed.
    Guides and Hair tabs are disabled, and the Loomis-only rows (side cut, face age, chin
    width) are hidden.
 4. Switch back to Loomis: your Loomis features and hair are still there.
@@ -79,10 +86,10 @@ Then in Krita:
   into one step needs C++ (or a layer swap that Krita groups, which would break
   `Guide.layer`/`guides.json`). This is documented debt, not a silent bug.
 - **The Asaro head is intentionally loose.** It is a low-poly planar study for construction,
-  not an anatomical model: no ears, no neck, no hair, no light/shadow. Its Loomis setters
-  (`set_sidecut`, `set_show_face`, …) are no-ops so the shared UI does not crash. Since
-  0.7.1 the profile reads (nose, socket, chin and occiput landmarks are tested), but it is
-  still the weakest view: a faceted chain of segments, not an anatomical curve.
+  not an anatomical model: no hair, no light/shadow. Its Loomis setters (`set_sidecut`,
+  `set_show_face`, …) are no-ops so the shared UI does not crash. Since 0.7.2 it is a
+  proportioned bust with ears and a neck toggle, but the cranium is still boxy, the ear is a
+  wedge and every silhouette is faceted — a chain of segments, not an anatomical curve.
 - **No light/shadow.** The 0.6.0 directional light was withdrawn in 0.6.1 and is not
   coming back in this fork.
 - `euclid.py` is still LGPL-2.1; everything else in the fork is GPL-3.0-only.

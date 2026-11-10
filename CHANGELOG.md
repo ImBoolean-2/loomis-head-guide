@@ -121,3 +121,31 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   three-quarter SVG validity, vertex/face symmetry, degenerate faces and finite values.
 - **Known limit**: the profile is still the weakest Asaro view — it is a faceted low-poly
   study, so the silhouette is a chain of segments, not an anatomical curve.
+
+## 0.7.2 — 2026-11-10
+
+- **Asaro rebuilt as a proportioned bust** (commit `7051243`): the old faceted sphere with a
+  small face mask is gone. The mesh is now a head plus neck on a single axis: total height
+  1.5, ear-to-ear width ~1.01 (height/width 1.485), crown-to-chin depth 0.75 (0.714 of the
+  head height, 0.50 of the bust), face (brow→chin) 44 % of the height and neck/base 30 %.
+- **Full anatomy in planes**: crown, forehead, brow, orbital socket, nose (nasion, dorsum,
+  tip, base), maxilla, upper/lower lip, mental groove, chin, jaw, ear, occiput and neck. The
+  ear is a lateral wedge at brow/nose height; the profile runs forehead → brow → nasion →
+  dorsum → tip → philtrum → lips → chin and the nape curves into the neck instead of ending
+  in a vertical wall.
+- **Measured profile landmarks**: the nose tip is the most forward point and stands 0.09+
+  beyond the brow–chin plane; the socket sits behind the brow and the cheekbone stands out
+  from the orbital rim; the lips beat the mental groove and the chin closes under the jaw
+  with a throat hollow.
+- **Neck toggle**: new `show_neck` parameter (default `True`) with `set_show_neck()`, a
+  **Show neck** checkbox in the Asaro panel (`asaro.show_neck` in en/es/pt/fr) and
+  `showNeck` in `to_dict`/`from_dict`; 0.7.1 heads without the key load with the neck on.
+  Without the neck the jaw is capped, so the head stays a closed solid (no hole, no NaN).
+- **Mesh sizes**: 60 / 80 / 100 faces at detail 0 / 1 / 2 with the neck (52 / 72 / 92
+  without it), still symmetric and without degenerate faces or dead vertices.
+- **Tests**: 73 unit tests (40 generator + 33 Asaro). The 10 new Asaro tests cover height,
+  width and depth ratios, face/neck share, landmark heights, nose and socket relief,
+  lips/chin step, occiput and nape curves, ear position, neck toggle, closed cap and the
+  neck not changing the head faces.
+- **Known limits**: the cranium is still boxy (it is a low-poly plane study, not a smooth
+  sculpt), the ear is a wedge and the mesh is faceted in every view; no light or shadow.

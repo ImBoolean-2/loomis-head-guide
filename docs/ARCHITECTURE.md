@@ -37,21 +37,28 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 - `AsaroHead` (`asaro.py`) draws a low-poly head as face contours: orthographic
   projection with the same scale as the generator (`min(width, height) * 0.3 * scale`),
   painter's algorithm by mean z, front edges with `front_line_stroke`, back edges with
-  `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`, `detail`
-  (0..2). It also carries the Loomis attributes and setters as defaults/no-ops so
-  `_sync_ui_from_model` does not break; the UI hides them for Asaro.
-- **Profile mesh (0.7.1)**: at 90° the projection keeps only (z, y), so the silhouette is
-  two curves — face (forehead → brow → nasion → dorsum → tip → philtrum → lips → chin) and
-  back (crown → occiput → nape). Those curves are defined by the `x == 0` vertices of
-  `_HALF_VERTICES`; interior vertices only add creases, and moving a `x == 0` vertex
-  changes the profile. The mesh gives 32 / 62 / 68 faces at detail 0 / 1 / 2, symmetric
-  and without degenerate faces. Profile is still the weakest view: it is a faceted
-  low-poly chain of segments, not an anatomical curve. `test_asaro.py` locks the landmarks
-  (nose step, socket depth, chin/lip step, nape curve) plus symmetry, degenerate faces and
-  finite values; the suite is 63 tests (40 generator + 23 Asaro).
+  `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`,
+  `show_neck`, `detail` (0..2). It also carries the Loomis attributes and setters as
+  defaults/no-ops so `_sync_ui_from_model` does not break; the UI hides them for Asaro.
+- **Asaro mesh v2 (0.7.2)**: the mesh is a proportioned bust drawn on one axis — height 1.5,
+  ear-to-ear 1.01, crown-to-chin depth 0.75 (0.714 of the head, 0.50 of the bust), face
+  (brow→chin) 44 % of the height and neck 30 %. It covers crown, forehead, brow, socket,
+  nose (nasion, dorsum, tip, base), maxilla, lips, mental groove, chin, jaw, ear, occiput
+  and neck. The columns are `F` (face centre), `G`, `H`, `J` and `K` (nape centre); `F` and
+  `K` are the `x == 0` vertices, so they alone define the 90° profile, while the lateral
+  strips only add creases. Faces: 60 / 80 / 100 at detail 0 / 1 / 2 with the neck
+  (52 / 72 / 92 without it). The ear is an island of two triangles; the cranial tiling is
+  deliberately coarse, with T-junctions between strips (no visible hole, fewer faces).
+- **`show_neck`**: `AsaroHead.show_neck` (default `True`), `set_show_neck()`, `showNeck` in
+  `to_dict`/`from_dict` and the **Show neck** checkbox in `AsaroPanel`
+  (`asaro.show_neck`). With the neck off, `_HALF_CLOSED_FACES` caps the jaw ring, so the
+  head remains a closed solid instead of an open hole; the cranial and facial faces are
+  the same in both modes. `test_asaro.py` locks the proportions, the profile landmarks
+  (nose step, socket depth, lips/chin step, occiput/nape curve, ear position), the neck
+  toggle and the closed cap; the suite is 73 tests (40 generator + 33 Asaro).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
-  is `AsaroPanel` (planes, edges, detail). For Asaro the Guides and Hair tabs are disabled
-  and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
+  is `AsaroPanel` (planes, edges, neck, detail). For Asaro the Guides and Hair tabs are
+  disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
 - `_switch_model()` stashes the outgoing model (`to_dict()`) and restores the incoming one
   from the guide's `model_states`, then always re-applies `_COMMON_STATE_FIELDS` (scale,
   position, rotation, stroke, zone colours) from the outgoing model, so the guide keeps its
@@ -66,9 +73,9 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 selector, 3D preview, view selector, library and actions) and five scrollable tabs:
 **Settings**, **Move**, **Guides**, **Features** and **Hair**. The Features page hosts a
 **Model** combo and a `QStackedWidget` with `FeaturePanel` (Loomis) and `AsaroPanel`
-(planes, edges, detail) from `features_dialog.py`; the Hair page hosts `HairPanel`. Each
-panel is bound to the active model with `set_model`/`sync_from_model` when the guide or the
-model changes. With Asaro active, the Guides and Hair tabs are disabled and the Loomis-only
+(planes, edges, neck, detail) from `features_dialog.py`; the Hair page hosts `HairPanel`.
+Each panel is bound to the active model with `set_model`/`sync_from_model` when the guide or
+the model changes. With Asaro active, the Guides and Hair tabs are disabled and the Loomis-only
 Settings rows are hidden.
 
 ## Head structure
