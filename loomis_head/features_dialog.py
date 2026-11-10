@@ -394,6 +394,7 @@ class AsaroPanel(_ModelPanel):
 
         self.planes_check = self._add_flag(t("asaro.show_planes"), "show_planes", True)
         self.edges_check = self._add_flag(t("asaro.show_edges"), "show_edges", True)
+        self.neck_check = self._add_flag(t("asaro.show_neck"), "show_neck", True)
 
         self.detail_combo = QComboBox()
         for key, level in (

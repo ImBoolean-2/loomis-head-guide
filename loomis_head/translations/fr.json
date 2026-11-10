@@ -121,6 +121,7 @@
   "model.asaro": "Asaro",
   "asaro.show_planes": "Afficher les plans",
   "asaro.show_edges": "Afficher les arêtes",
+  "asaro.show_neck": "Afficher le cou",
   "asaro.detail": "Détail",
   "asaro.detail.low": "Bas",
   "asaro.detail.medium": "Moyen",

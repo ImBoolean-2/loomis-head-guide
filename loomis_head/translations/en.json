@@ -123,6 +123,7 @@
   "model.asaro": "Asaro",
   "asaro.show_planes": "Show planes",
   "asaro.show_edges": "Show edges",
+  "asaro.show_neck": "Show neck",
   "asaro.detail": "Detail",
   "asaro.detail.low": "Low",
   "asaro.detail.medium": "Medium",
