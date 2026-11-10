@@ -36,6 +36,12 @@
     "craniumHeight": 1.0,
     "cheekboneHeight": 0.5,
     "chinSharpness": 0.0,
+    "headSex": 0,
+    "browRidge": 0.5,
+    "eyeSocketDepth": 0.5,
+    "eyeSocketSize": 0.55,
+    "showEyeSocket": true,
+    "cheekFullness": 0.5,
     "showRhythm": false,
     "rhythmStrength": 0.6,
     "showFeatures": true,
@@ -72,11 +78,6 @@
     "showSideCross": true,
     "frontStroke": 10.0,
     "backStroke": 7.0,
-    "strokeColor": "#6A54E7",
-    "lightAzimuth": -35.0,
-    "lightElevation": 35.0,
-    "lightIntensity": 0.35,
-    "showShadow": false,
-    "shadowMode": 0
+    "strokeColor": "#6A54E7"
   }
 }

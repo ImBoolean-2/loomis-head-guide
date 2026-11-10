@@ -46,3 +46,22 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   `jaw_angle` now defaults to `0.0`.
 - Tests: 31 generator tests plus 25 light tests, and an offscreen docker check with six
   tabs.
+
+## 0.6.1 — 2026-11-09
+
+- **Light removed**: the directional light/shadow and the **Light** tab are gone (it was a
+  different product). The docker is back to five tabs: Settings, Move, Guides, Features,
+  Hair. `light.py`, `test_light.py`, `LightPanel`, `tabs.light` and the `light.*` strings
+  were deleted.
+- **Head sex**: new `head_sex` (male/female) with presets that combine with the head style;
+  changing the style re-applies the current sex.
+- **Eye socket**: sunken orbit (rim + displaced inner floor + depth ticks) drawn as a front
+  feature, independent of the eye circle.
+- **Brow ridge and cheeks**: a superciliary ridge curve above the brow with a projection
+  tick, and a cheek-fill curve from the cheekbone arch to the jaw.
+- New controls in **Features**: Sex combo and a "Socket and brows" section (socket
+  checkbox, socket depth/size, brow ridge, cheek fullness).
+- Tests: 40 generator tests, and an offscreen docker check with five tabs, no Light tab,
+  QAM action discovery, sex presets and socket controls.
+- Compatibility: head JSON from 0.5.1 and 0.6.0 loads with the new keys at their defaults.
+- Note: the 0.6.0 entry is kept as history; 0.6.1 withdraws the light.

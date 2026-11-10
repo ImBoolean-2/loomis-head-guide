@@ -348,24 +348,6 @@ class GeneratorTests(unittest.TestCase):
                      "show_nose_guide", "show_mouth_guide"):
             self.assertTrue(getattr(head, name))
 
-    def test_light_defaults_and_clamps(self):
-        head = LoomisHead3D()
-        self.assertEqual(head.light_azimuth, -35.0)
-        self.assertEqual(head.light_elevation, 35.0)
-        self.assertEqual(head.light_intensity, 0.35)
-        self.assertFalse(head.show_shadow)
-        self.assertEqual(head.shadow_mode, 0)
-        head.set_light_azimuth(-999)
-        self.assertEqual(head.light_azimuth, -180.0)
-        head.set_light_elevation(999)
-        self.assertEqual(head.light_elevation, 90.0)
-        head.set_light_intensity(9)
-        self.assertEqual(head.light_intensity, 1.0)
-        head.set_shadow_mode(5)
-        self.assertEqual(head.shadow_mode, 1)
-        head.set_show_shadow(True)
-        self.assertTrue(head.show_shadow)
-
     def test_new_fields_roundtrip(self):
         head = LoomisHead3D()
         head.set_forehead_height(1.25)
@@ -378,11 +360,12 @@ class GeneratorTests(unittest.TestCase):
         head.set_rhythm_strength(0.9)
         head.set_show_brow_guide(False)
         head.set_show_nose_guide(False)
-        head.set_light_azimuth(40.0)
-        head.set_light_elevation(-10.0)
-        head.set_light_intensity(0.8)
-        head.set_show_shadow(True)
-        head.set_shadow_mode(1)
+        head.set_head_sex(1)
+        head.set_brow_ridge(0.8)
+        head.set_eye_socket_depth(0.2)
+        head.set_eye_socket_size(0.75)
+        head.set_show_eye_socket(False)
+        head.set_cheek_fullness(0.9)
         clone = LoomisHead3D()
         clone.from_dict(head.to_dict())
         self.assertEqual(head.to_dict(), clone.to_dict())
@@ -423,8 +406,145 @@ class GeneratorTests(unittest.TestCase):
         self.assertFalse(head.show_rhythm)
         self.assertEqual(head.rhythm_strength, 0.6)
         self.assertTrue(head.show_brow_guide)
-        self.assertFalse(head.show_shadow)
-        self.assertEqual(head.shadow_mode, 0)
+        self.assertEqual(head.head_sex, 0)
+        self.assertEqual(head.brow_ridge, 0.5)
+        self.assertEqual(head.eye_socket_depth, 0.5)
+        self.assertEqual(head.eye_socket_size, 0.55)
+        self.assertTrue(head.show_eye_socket)
+        self.assertEqual(head.cheek_fullness, 0.5)
+
+    def test_dict_060_ignores_light_keys(self):
+        # Preset de 0.6.0: trae claves de luz que 0.6.1 ya no usa.
+        payload = LoomisHead3D().to_dict()
+        payload.update({
+            "lightAzimuth": 120.0,
+            "lightElevation": -40.0,
+            "lightIntensity": 0.8,
+            "showShadow": True,
+            "shadowMode": 1,
+        })
+        for key in ("headSex", "browRidge", "eyeSocketDepth", "eyeSocketSize",
+                    "showEyeSocket", "cheekFullness"):
+            payload.pop(key)
+        head = LoomisHead3D()
+        head.from_dict(payload)
+        svg = head.build_svg(800, 800)
+        self.assertIn("<svg", svg)
+        self.assertNotIn("nan", svg.lower())
+        self.assertFalse(hasattr(head, "light_azimuth"))
+        self.assertFalse(hasattr(head, "show_shadow"))
+
+    # --- 0.6.1: sexo, cuenca orbitaria, ceja y mejillas -------------------
+
+    def test_sex_and_socket_defaults(self):
+        head = LoomisHead3D()
+        self.assertEqual(head.head_sex, 0)
+        self.assertEqual(head.brow_ridge, 0.5)
+        self.assertEqual(head.eye_socket_depth, 0.5)
+        self.assertEqual(head.eye_socket_size, 0.55)
+        self.assertTrue(head.show_eye_socket)
+        self.assertEqual(head.cheek_fullness, 0.5)
+
+    def test_sex_and_socket_clamps(self):
+        head = LoomisHead3D()
+        head.set_head_sex(7)
+        self.assertEqual(head.head_sex, 1)
+        head.set_head_sex(-3)
+        self.assertEqual(head.head_sex, 0)
+        head.set_brow_ridge(9)
+        self.assertEqual(head.brow_ridge, 1.0)
+        head.set_eye_socket_depth(-1)
+        self.assertEqual(head.eye_socket_depth, 0.0)
+        head.set_eye_socket_size(99)
+        self.assertEqual(head.eye_socket_size, 0.9)
+        head.set_eye_socket_size(0.0)
+        self.assertEqual(head.eye_socket_size, 0.2)
+        head.set_cheek_fullness(2)
+        self.assertEqual(head.cheek_fullness, 1.0)
+        head.set_show_eye_socket(False)
+        self.assertFalse(head.show_eye_socket)
+
+    def test_new_keys_in_dict(self):
+        payload = LoomisHead3D().to_dict()
+        for key in ("headSex", "browRidge", "eyeSocketDepth", "eyeSocketSize",
+                    "showEyeSocket", "cheekFullness"):
+            self.assertIn(key, payload)
+        for key in ("lightAzimuth", "lightElevation", "lightIntensity",
+                    "showShadow", "shadowMode"):
+            self.assertNotIn(key, payload)
+
+    def test_eye_socket_toggle(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        with_socket = head.build_svg(800, 800)
+        head.set_show_eye_socket(False)
+        without = head.build_svg(800, 800)
+        self.assertLess(len(without), len(with_socket))
+        self.assertNotIn("nan", without.lower())
+        head.set_show_features(False)
+        self.assertLess(len(head.build_svg(800, 800)), len(without))
+
+    def test_eye_socket_hidden_without_features(self):
+        head = LoomisHead3D()
+        head.set_show_features(False)
+        head.set_show_eye_socket(True)
+        bare = head.build_svg(800, 800)
+        head.set_show_eye_socket(False)
+        self.assertEqual(bare, head.build_svg(800, 800))
+
+    def test_eye_socket_depth_and_size_change_svg(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        head.set_eye_socket_depth(0.0)
+        shallow = head.build_svg(800, 800)
+        head.set_eye_socket_depth(1.0)
+        deep = head.build_svg(800, 800)
+        self.assertNotEqual(shallow, deep)
+        head.set_eye_socket_size(0.2)
+        small = head.build_svg(800, 800)
+        head.set_eye_socket_size(0.9)
+        big = head.build_svg(800, 800)
+        self.assertNotEqual(small, big)
+        for svg in (shallow, deep, small, big):
+            self.assertNotIn("nan", svg.lower())
+            self.assertNotIn("inf", svg.lower())
+
+    def test_brow_ridge_changes_svg(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        head.set_brow_ridge(0.0)
+        flat = head.build_svg(800, 800)
+        head.set_brow_ridge(1.0)
+        strong = head.build_svg(800, 800)
+        self.assertNotEqual(flat, strong)
+        self.assertNotIn("nan", strong.lower())
+
+    def test_cheek_fullness_changes_svg(self):
+        head = LoomisHead3D()
+        head.set_show_face(True)
+        head.set_cheek_fullness(0.0)
+        lean = head.build_svg(800, 800)
+        head.set_cheek_fullness(1.0)
+        full = head.build_svg(800, 800)
+        self.assertNotEqual(lean, full)
+        self.assertNotIn("nan", full.lower())
+
+    def test_socket_extremes_render(self):
+        head = LoomisHead3D()
+        head.set_show_features(True)
+        cases = [
+            (head.set_brow_ridge, (0.0, 1.0)),
+            (head.set_eye_socket_depth, (0.0, 1.0)),
+            (head.set_eye_socket_size, (0.2, 0.9)),
+            (head.set_cheek_fullness, (0.0, 1.0)),
+        ]
+        for setter, values in cases:
+            for value in values:
+                setter(value)
+                svg = head.build_svg(800, 800)
+                self.assertIn("<svg", svg)
+                self.assertNotIn("nan", svg.lower())
+                self.assertNotIn("inf", svg.lower())
 
 
 if __name__ == "__main__":

@@ -8,23 +8,36 @@ needed by the docker and the preview widget; the geometry and its tests do not i
 | File | Role |
 | --- | --- |
 | `loomis_head_generator.py` | Pure Python Loomis geometry, parameters, `to_dict`/`from_dict`, SVG |
-| `light.py` | Directional light: terminator/cel shadow path, `shadow_svg(model, width, height)` |
 | `loomis_head_plugin.py` | Docker, Krita integration, guide manager, presets, Grimoire bridge |
 | `preview.py` | `QSvgRenderer` preview and arcball rotation |
-| `features_dialog.py` | `FeaturePanel` (caricature, proportions, feature lines, hair, Reilly), `HairPanel`, `LightPanel`; embedded in the docker |
+| `features_dialog.py` | `FeaturePanel` (sex, caricature, proportions, socket/brows, feature lines, hair, Reilly), `HairPanel`; embedded in the docker |
 | `i18n.py` + `translations/*.json` | Language override/locale and strings |
 | `linalg.py`, `euclid.py`, `geom_polyline.py` | Math and SVG path helpers |
 | `trackball.py` | Legacy widget kept for reference (the preview replaces it) |
-| `test_generator.py`, `test_light.py` | Pure-Python unit tests (no Krita/Qt needed) |
+| `test_generator.py` | Pure-Python unit tests (no Krita/Qt needed) |
 
 ## Docker UI
 
 `LoomisProportionsDocker` (`loomis_head_plugin.py`) keeps a fixed top block (head
-selector, 3D preview, view selector, library and actions) and six scrollable tabs:
-**Settings**, **Move**, **Guides**, **Features**, **Hair** and **Light**. The last three
-tabs host `FeaturePanel`, `HairPanel` and `LightPanel` from `features_dialog.py`; each
-panel is bound to the active model with `set_model`/`sync_from_model` when the guide
-changes.
+selector, 3D preview, view selector, library and actions) and five scrollable tabs:
+**Settings**, **Move**, **Guides**, **Features** and **Hair**. The last two tabs host
+`FeaturePanel` and `HairPanel` from `features_dialog.py`; each panel is bound to the active
+model with `set_model`/`sync_from_model` when the guide changes.
+
+## Head structure
+
+`FeaturePanel` drives the skull structure on the active model:
+
+- **Sex** combo (`head_sex`): applies the male or female preset (`SEX_PRESETS`) and stores
+  the choice. Switching head style (`_apply_type`) re-applies the current sex afterwards.
+- **Eye socket** (`show_eye_socket`, `eye_socket_depth`, `eye_socket_size`): the generator
+  draws the orbital rim, a smaller floor displaced towards the nose and down, and two depth
+  ticks, as `feature_front`. It is independent of the eye circle (`show_eyes`).
+- **Brow ridge** (`brow_ridge`): a superciliary ridge curve above the brow plus a central
+  projection tick.
+- **Cheek fullness** (`cheek_fullness`): a quadratic fill curve from the cheekbone arch
+  (`cheek_rim_touch`) to the jaw corner, in the `cheek` zone; `cheek` still controls the
+  zygomatic prominence.
 
 ## Guide manager
 

@@ -28,7 +28,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 ## Features
 
 - **Tabbed docker**: the head, 3D preview, view selector, library and action buttons stay
-  fixed; Settings, Move, Guides, Features, Hair and Light live in scrollable tabs.
+  fixed; Settings, Move, Guides, Features and Hair live in scrollable tabs.
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
@@ -36,12 +36,13 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
   lines, eye sockets, brows, nose, ears and mouth. Brow, eye, nose and mouth guide lines
   can be shown or hidden independently.
+- **Head sex and structure**: male/female presets that combine with the head style; a
+  sunken orbital socket (rim, inner floor and depth ticks), a superciliary brow ridge and a
+  cheek-fill curve make the skull read in 3D.
 - **Parametric proportions**: forehead height, jaw angle, cranium width/height, cheekbone
   height and chin sharpness, plus caricature and head-type presets.
 - **Reilly rhythm curves**: optional crown→brow→nose→mouth→chin flow lines and lateral
   arches, with adjustable strength.
-- **Directional light**: light azimuth, elevation and intensity, terminator or cel shading
-  clipped to the lateral band, driven from the **Light** tab.
 - **Caricature and head types**: realistic, semi, anime, chibi and caricature presets;
   cranium, jaw, cheek, face width and jaw drop are adjustable.
 - **Custom hair**: hairline, arch, tilt, part position, part pattern (straight, zigzag,
@@ -65,7 +66,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.6.0.zip`.
+1. Download `release/loomis-head-guide-0.6.1.zip`.
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -136,10 +137,9 @@ version only accepts `loomis`.
 ```bash
 cd loomis_head
 python3 -m unittest test_generator.py -v
-python3 test_light.py
 ```
 
-The generator and light tests do not need Krita, Qt or PyQt5. The UI/docker needs Krita; load it
+The 40 generator tests do not need Krita, Qt or PyQt5. The UI/docker needs Krita; load it
 with `Tools → Scripts → Import Python Plugins` or by copying the folder.
 
 Repository layout:

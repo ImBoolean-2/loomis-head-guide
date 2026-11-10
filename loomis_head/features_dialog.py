@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Paneles de rasgos, caricatura, pelo y luz del Loomis Head Guide.
+"""Paneles de rasgos y pelo del Loomis Head Guide.
 
-Se separan en widgets (rasgos, pelo y luz) para que el docker pueda mostrarlos
+Se separan en widgets (rasgos y pelo) para que el docker pueda mostrarlos
 en pestanas independientes. Todos trabajan sobre el modelo activo y comparten
 el callback de redibujo.
 """
@@ -58,6 +58,18 @@ HEAD_TYPES = (
 )
 
 
+# Presets de sexo: se aplican encima del estilo de cabeza. El indice es
+# head_sex (0 masculino, 1 femenino).
+SEX_PRESETS = (
+    dict(brow_ridge=0.80, eye_socket_depth=0.75, eye_socket_size=0.50,
+         cheek_fullness=0.35, cheek=0.55, jaw_angle=0.55,
+         chin_sharpness=0.20, forehead_height=0.95),
+    dict(brow_ridge=0.35, eye_socket_depth=0.45, eye_socket_size=0.60,
+         cheek_fullness=0.65, cheek=0.65, jaw_angle=0.25,
+         chin_sharpness=0.10, forehead_height=1.05),
+)
+
+
 class _ModelPanel(QWidget):
     """Base para paneles que cambian de modelo (varias cabezas/documentos)."""
 
@@ -86,6 +98,25 @@ class _ModelPanel(QWidget):
             self._form.addRow(label, slider)
         self._sliders.append((slider, getter))
 
+    def _slider_field(self, label, low, high, attr, default, scale=100.0) -> None:
+        """Slider ligado a un campo del modelo que puede no existir todavia.
+
+        Getter y setter se resuelven en cada llamada sobre self.model, de modo
+        que cambiar de cabeza (set_model) escribe en el modelo activo y no en el
+        que existia al construir el panel. Si el generador aun no tiene el campo,
+        se usa `default` al leer y el setter se omite al escribir.
+        """
+
+        def getter():
+            return float(getattr(self.model, attr, default)) * scale
+
+        def setter(value):
+            fn = getattr(self.model, "set_" + attr, None)
+            if fn is not None:
+                fn(value / scale)
+
+        self._slider(label, low, high, getter, setter)
+
     def _apply(self, setter, value) -> None:
         if self._syncing:
             return
@@ -105,6 +136,7 @@ class FeaturePanel(_ModelPanel):
     def __init__(self, model, on_change, parent=None):
         super().__init__(model, on_change, parent)
         self._flags: list[tuple[QCheckBox, str]] = []
+        self._flag_defaults: dict[str, bool] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -120,6 +152,12 @@ class FeaturePanel(_ModelPanel):
             self.type_combo.addItem(t(key))
         self.type_combo.activated[int].connect(self._apply_type)
         self._form.addRow(t("headtype.label"), self.type_combo)
+
+        self.sex_combo = QComboBox()
+        self.sex_combo.addItem(t("features.sex.male"))
+        self.sex_combo.addItem(t("features.sex.female"))
+        self.sex_combo.activated[int].connect(self._apply_sex)
+        self._form.addRow(t("features.sex"), self.sex_combo)
 
         self._section(t("features.section.caricature"))
         self._slider(t("features.cranium"), 60, 160, lambda: self.model.cranium * 100, lambda v: self.model.set_cranium(v / 100))
@@ -171,15 +209,30 @@ class FeaturePanel(_ModelPanel):
             (t("features.mouth"), "show_mouth"),
         ))
 
+        self._section(t("features.section.eye"))
+        self._add_flag_row(None, (
+            (t("features.eye_socket"), "show_eye_socket"),
+        ), defaults={"show_eye_socket": True})
+        self._slider_field(t("features.eye_socket_depth"), 0, 100,
+                           "eye_socket_depth", 0.5)
+        self._slider_field(t("features.eye_socket_size"), 20, 90,
+                           "eye_socket_size", 0.55)
+        self._slider_field(t("features.brow_ridge"), 0, 100, "brow_ridge", 0.5)
+        self._slider_field(t("features.cheek_fullness"), 0, 100,
+                           "cheek_fullness", 0.5)
+
         self.sync_from_model()
 
-    def _add_flag_row(self, label, items) -> None:
+    def _add_flag_row(self, label, items, defaults=None) -> None:
+        defaults = defaults or {}
         box = QWidget()
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         for text, attr in items:
+            default = bool(defaults.get(attr, False))
+            self._flag_defaults[attr] = default
             checkbox = QCheckBox(text)
-            checkbox.setChecked(bool(getattr(self.model, attr, False)))
+            checkbox.setChecked(bool(getattr(self.model, attr, default)))
             # El setter se resuelve en tiempo de llamada: al cambiar de cabeza
             # (set_model) los checkboxes deben escribir en el modelo activo,
             # no en el que existia al construir el panel.
@@ -194,7 +247,9 @@ class FeaturePanel(_ModelPanel):
     def _apply_flag(self, attr: str, checked: bool) -> None:
         if self._syncing:
             return
-        getattr(self.model, "set_" + attr)(checked)
+        setter = getattr(self.model, "set_" + attr, None)
+        if setter is not None:
+            setter(checked)
         self.on_change()
 
     def _set_master(self, checked: bool) -> None:
@@ -213,17 +268,46 @@ class FeaturePanel(_ModelPanel):
             setter = getattr(self.model, "set_" + key, None)
             if setter is not None:
                 setter(value)
+        # El estilo define la base; el sexo elegido se reaplica encima para que
+        # cambiar de tipo de cabeza no borre la eleccion.
+        self._apply_sex_preset(self.sex_combo.currentIndex())
         self.on_change()
         self.sync_from_model()
+
+    def _apply_sex(self, index: int) -> None:
+        if not 0 <= index < len(SEX_PRESETS):
+            return
+        self._apply_sex_preset(index)
+        self.on_change()
+        self.sync_from_model()
+
+    def _apply_sex_preset(self, index: int) -> None:
+        if not 0 <= index < len(SEX_PRESETS):
+            return
+        setter = getattr(self.model, "set_head_sex", None)
+        if setter is not None:
+            setter(index)
+        for key, value in SEX_PRESETS[index].items():
+            fn = getattr(self.model, "set_" + key, None)
+            if fn is not None:
+                fn(value)
 
     def sync_from_model(self) -> None:
         self._syncing = True
         self.master.setChecked(bool(self.model.show_features))
         self.type_combo.setCurrentIndex(self._type_index())
+        # Si el modelo aun no tiene head_sex se conserva la eleccion del combo.
+        sex = getattr(self.model, "head_sex", self.sex_combo.currentIndex())
+        try:
+            sex = int(sex)
+        except (TypeError, ValueError):
+            sex = self.sex_combo.currentIndex()
+        self.sex_combo.setCurrentIndex(max(0, min(sex, self.sex_combo.count() - 1)))
         for slider, getter in self._sliders:
             slider.setValue(int(round(getter())))
         for checkbox, attr in self._flags:
-            checkbox.setChecked(bool(getattr(self.model, attr, False)))
+            default = self._flag_defaults.get(attr, False)
+            checkbox.setChecked(bool(getattr(self.model, attr, default)))
         self._syncing = False
 
     def _type_index(self) -> int:
@@ -289,61 +373,6 @@ class HairPanel(_ModelPanel):
         self.master.setChecked(bool(self.model.show_hair))
         self.part_combo.setCurrentIndex(int(self.model.hair_part))
         self.texture_combo.setCurrentIndex(int(self.model.hair_texture))
-        for slider, getter in self._sliders:
-            slider.setValue(int(round(getter())))
-        self._syncing = False
-
-
-class LightPanel(_ModelPanel):
-    """Luz direccional: azimut, elevacion, intensidad y modo de sombra."""
-
-    def __init__(self, model, on_change, parent=None):
-        super().__init__(model, on_change, parent)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        self.master = QCheckBox(t("light.show"))
-        self.master.toggled.connect(self._set_master)
-        outer.addWidget(self.master)
-
-        self._form = QFormLayout()
-        outer.addLayout(self._form)
-
-        self._section(t("light.section"))
-        self._slider(t("light.azimuth"), -180, 180,
-                     lambda: self.model.light_azimuth,
-                     lambda v: self.model.set_light_azimuth(v))
-        self._slider(t("light.elevation"), -90, 90,
-                     lambda: self.model.light_elevation,
-                     lambda v: self.model.set_light_elevation(v))
-        self._slider(t("light.intensity"), 0, 100,
-                     lambda: self.model.light_intensity * 100,
-                     lambda v: self.model.set_light_intensity(v / 100))
-
-        self.mode_combo = QComboBox()
-        for key in ("light.mode.terminator", "light.mode.cel"):
-            self.mode_combo.addItem(t(key))
-        self.mode_combo.activated[int].connect(self._set_mode)
-        self._form.addRow(t("light.mode"), self.mode_combo)
-
-        self.sync_from_model()
-
-    def _set_master(self, checked: bool) -> None:
-        if self._syncing:
-            return
-        self.model.set_show_shadow(checked)
-        self.on_change()
-
-    def _set_mode(self, index: int) -> None:
-        if self._syncing:
-            return
-        self.model.set_shadow_mode(index)
-        self.on_change()
-
-    def sync_from_model(self) -> None:
-        self._syncing = True
-        self.master.setChecked(bool(self.model.show_shadow))
-        self.mode_combo.setCurrentIndex(int(self.model.shadow_mode))
         for slider, getter in self._sliders:
             slider.setValue(int(round(getter())))
         self._syncing = False

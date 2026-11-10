@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import (
 )
 
 from . import i18n
-from .features_dialog import FeaturePanel, HairPanel, LightPanel
+from .features_dialog import FeaturePanel, HairPanel
 from .preview import HeadPreviewWidget
 from .i18n import t
 from .linalg import (
@@ -87,7 +87,6 @@ class LoomisProportionsDocker(DockWidget):
         self._presets_path = self._preset_path()
         self.feature_panel = None
         self.hair_panel = None
-        self.light_panel = None
         self._slider_sync = False
         self._characters = []
         self._heads = {}
@@ -103,7 +102,6 @@ class LoomisProportionsDocker(DockWidget):
         self._refresh_oc_combo()
         self.feature_panel = FeaturePanel(self.loomis_head, self.schedule_update, self)
         self.hair_panel = HairPanel(self.loomis_head, self.schedule_update, self)
-        self.light_panel = LightPanel(self.loomis_head, self.schedule_update, self)
         self.transform_group = self._build_transform_panel()
         self.language_group = self._build_language_panel()
         self._build_dashboard()
@@ -276,8 +274,6 @@ class LoomisProportionsDocker(DockWidget):
                 self.feature_panel.set_model(self.loomis_head)
             if self.hair_panel is not None:
                 self.hair_panel.set_model(self.loomis_head)
-            if self.light_panel is not None:
-                self.light_panel.set_model(self.loomis_head)
         self._save_doc_state()
 
     def _load_guides(self, doc, saved: dict) -> None:
@@ -439,8 +435,6 @@ class LoomisProportionsDocker(DockWidget):
             self.feature_panel.set_model(self.loomis_head)
         if self.hair_panel is not None:
             self.hair_panel.set_model(self.loomis_head)
-        if self.light_panel is not None:
-            self.light_panel.set_model(self.loomis_head)
         try:
             if self.doc is not None:
                 self.doc.setActiveNode(guide.layer)
@@ -498,8 +492,6 @@ class LoomisProportionsDocker(DockWidget):
                 self.feature_panel.set_model(self.loomis_head)
             if self.hair_panel is not None:
                 self.hair_panel.set_model(self.loomis_head)
-            if self.light_panel is not None:
-                self.light_panel.set_model(self.loomis_head)
             self.schedule_update()
         self._save_doc_state()
 
@@ -566,8 +558,6 @@ class LoomisProportionsDocker(DockWidget):
                 self.feature_panel.set_model(self.loomis_head)
             if self.hair_panel is not None:
                 self.hair_panel.set_model(self.loomis_head)
-            if self.light_panel is not None:
-                self.light_panel.set_model(self.loomis_head)
             self._refresh_guide_combo()
             return
         key = doc.fileName() or f"unsaved:{id(doc)}"
@@ -811,7 +801,6 @@ class LoomisProportionsDocker(DockWidget):
                 "tabs.guides",
                 "tabs.features",
                 "tabs.hair",
-                "tabs.light",
             )):
                 if index < self.tabs.count():
                     self.tabs.setTabText(index, t(key))
@@ -954,9 +943,6 @@ class LoomisProportionsDocker(DockWidget):
 
         self.hair_page, self.hair_page_layout = self._page(self.hair_panel)
         self.tabs.addTab(self.hair_page, t("tabs.hair"))
-
-        self.light_page, self.light_page_layout = self._page(self.light_panel)
-        self.tabs.addTab(self.light_page, t("tabs.light"))
 
     def _page(self, widget: QWidget):
         """Envuelve un panel en una pestana con scroll propio."""
@@ -1222,8 +1208,6 @@ class LoomisProportionsDocker(DockWidget):
              lambda: FeaturePanel(self.loomis_head, self.schedule_update, self)),
             ("hair_panel", "hair_page_layout",
              lambda: HairPanel(self.loomis_head, self.schedule_update, self)),
-            ("light_panel", "light_page_layout",
-             lambda: LightPanel(self.loomis_head, self.schedule_update, self)),
             ("transform_group", "transform_page_layout", self._build_transform_panel),
         )
         for attr, layout_attr, builder in replacements:
@@ -1242,8 +1226,6 @@ class LoomisProportionsDocker(DockWidget):
             self.feature_panel.set_model(self.loomis_head)
         if self.hair_panel is not None:
             self.hair_panel.set_model(self.loomis_head)
-        if self.light_panel is not None:
-            self.light_panel.set_model(self.loomis_head)
         self._sync_ui_from_model()
         self._sync_euler_from_model()
 
@@ -1421,8 +1403,6 @@ class LoomisProportionsDocker(DockWidget):
             self.feature_panel.sync_from_model()
         if self.hair_panel is not None:
             self.hair_panel.sync_from_model()
-        if self.light_panel is not None:
-            self.light_panel.sync_from_model()
         self.schedule_update()
 
     def _sync_ui_from_model(self) -> None:

@@ -62,6 +62,13 @@ class LoomisHead3D:
         self.cranium_height: float = 1.0
         self.cheekbone_height: float = 0.5
         self.chin_sharpness: float = 0.0
+        # Sexo y construccion de cuenca orbitaria, ceja y mejillas (0.6.1).
+        self.head_sex: int = 0
+        self.brow_ridge: float = 0.5
+        self.eye_socket_depth: float = 0.5
+        self.eye_socket_size: float = 0.55
+        self.show_eye_socket: bool = True
+        self.cheek_fullness: float = 0.5
         self.show_rhythm: bool = False
         self.rhythm_strength: float = 0.6
         # Rasgos faciales (lineas de Loomis, cuencas, nariz, orejas, boca, cejas).
@@ -105,12 +112,6 @@ class LoomisHead3D:
         self.show_side_rims: bool = True
         self.show_side_cross: bool = True
         self.stroke_color: str = "#6A54E7"
-        # Luz direccional (0.6.0); la consume loomis_head/light.py.
-        self.light_azimuth: float = -35.0
-        self.light_elevation: float = 35.0
-        self.light_intensity: float = 0.35
-        self.show_shadow: bool = False
-        self.shadow_mode: int = 0
         self.q: Quaternion = q_identity()
 
     def set_quaternion(self, q: Quaternion) -> None:
@@ -166,6 +167,24 @@ class LoomisHead3D:
 
     def set_chin_sharpness(self, value: float) -> None:
         self.chin_sharpness = self._clamp01(value)
+
+    def set_head_sex(self, value: int) -> None:
+        self.head_sex = max(0, min(1, int(value)))
+
+    def set_brow_ridge(self, value: float) -> None:
+        self.brow_ridge = self._clamp01(value)
+
+    def set_eye_socket_depth(self, value: float) -> None:
+        self.eye_socket_depth = self._clamp01(value)
+
+    def set_eye_socket_size(self, value: float) -> None:
+        self.eye_socket_size = max(0.2, min(0.9, float(value)))
+
+    def set_show_eye_socket(self, enable: bool) -> None:
+        self.show_eye_socket = bool(enable)
+
+    def set_cheek_fullness(self, value: float) -> None:
+        self.cheek_fullness = self._clamp01(value)
 
     def set_show_rhythm(self, enable: bool) -> None:
         self.show_rhythm = bool(enable)
@@ -293,21 +312,6 @@ class LoomisHead3D:
     def set_stroke_color(self, color: str) -> None:
         self.stroke_color = color
 
-    def set_light_azimuth(self, value: float) -> None:
-        self.light_azimuth = max(-180.0, min(180.0, float(value)))
-
-    def set_light_elevation(self, value: float) -> None:
-        self.light_elevation = max(-90.0, min(90.0, float(value)))
-
-    def set_light_intensity(self, value: float) -> None:
-        self.light_intensity = self._clamp01(value)
-
-    def set_show_shadow(self, enable: bool) -> None:
-        self.show_shadow = bool(enable)
-
-    def set_shadow_mode(self, value: int) -> None:
-        self.shadow_mode = max(0, min(1, int(value)))
-
     def _effective_hair_line(self) -> float:
         """Linea de nacimiento del pelo ya escalada por forehead_height."""
         line = self.brow_line + (self.hair_line - self.brow_line) * self.forehead_height
@@ -337,6 +341,12 @@ class LoomisHead3D:
             "craniumHeight": self.cranium_height,
             "cheekboneHeight": self.cheekbone_height,
             "chinSharpness": self.chin_sharpness,
+            "headSex": self.head_sex,
+            "browRidge": self.brow_ridge,
+            "eyeSocketDepth": self.eye_socket_depth,
+            "eyeSocketSize": self.eye_socket_size,
+            "showEyeSocket": self.show_eye_socket,
+            "cheekFullness": self.cheek_fullness,
             "showRhythm": self.show_rhythm,
             "rhythmStrength": self.rhythm_strength,
             "showFeatures": self.show_features,
@@ -378,11 +388,6 @@ class LoomisHead3D:
             "frontStroke": self.front_line_stroke,
             "backStroke": self.back_line_stroke,
             "strokeColor": self.stroke_color,
-            "lightAzimuth": self.light_azimuth,
-            "lightElevation": self.light_elevation,
-            "lightIntensity": self.light_intensity,
-            "showShadow": self.show_shadow,
-            "shadowMode": self.shadow_mode,
         }
 
     def from_dict(self, data: dict) -> None:
@@ -423,6 +428,12 @@ class LoomisHead3D:
         self.set_cranium_height(num("craniumHeight", self.cranium_height))
         self.set_cheekbone_height(num("cheekboneHeight", self.cheekbone_height))
         self.set_chin_sharpness(num("chinSharpness", self.chin_sharpness))
+        self.set_head_sex(int(num("headSex", self.head_sex)))
+        self.set_brow_ridge(num("browRidge", self.brow_ridge))
+        self.set_eye_socket_depth(num("eyeSocketDepth", self.eye_socket_depth))
+        self.set_eye_socket_size(num("eyeSocketSize", self.eye_socket_size))
+        self.set_show_eye_socket(flag("showEyeSocket", self.show_eye_socket))
+        self.set_cheek_fullness(num("cheekFullness", self.cheek_fullness))
         self.set_show_rhythm(flag("showRhythm", self.show_rhythm))
         self.set_rhythm_strength(num("rhythmStrength", self.rhythm_strength))
         self.set_show_features(flag("showFeatures", self.show_features))
@@ -466,11 +477,6 @@ class LoomisHead3D:
         color = src.get("strokeColor")
         if isinstance(color, str) and color.startswith("#") and len(color) in (4, 7):
             self.stroke_color = color
-        self.set_light_azimuth(num("lightAzimuth", self.light_azimuth))
-        self.set_light_elevation(num("lightElevation", self.light_elevation))
-        self.set_light_intensity(num("lightIntensity", self.light_intensity))
-        self.set_show_shadow(flag("showShadow", self.show_shadow))
-        self.set_shadow_mode(int(num("shadowMode", self.shadow_mode)))
 
     def _basis_from_nnormal(self, n: Vector3 | Sequence[float]) -> tuple[Vector3, Vector3]:
         nn = n if isinstance(n, Vector3) else Vector3(*n)
@@ -797,6 +803,11 @@ class LoomisHead3D:
                     u*u*u*cheek_rim_touch.z + 3*u*u*t*cheek_c1.z + 3*u*t*t*cheek_c2.z + t*t*t*cheek_end.z,
                 ))
             cheekbone_curves.append(cheek_curve)
+            # Relleno de mejilla: arco cigomatico -> vertice de mandibula.
+            fill_mid = (cheek_rim_touch + cheek_end) * 0.5 + Vector3(0.0, -0.06 * rc, 0.0)
+            fill_bow = side * self.cheek_fullness * 0.10 * r
+            fill_control = fill_mid + Vector3(fill_bow, 0.0, 0.0)
+            cheekbone_curves.append(self._quadratic(cheek_rim_touch, fill_control, cheek_end))
 
         # Rasgos faciales opcionales.
         feature_front: list[Poly3] = []
@@ -823,6 +834,50 @@ class LoomisHead3D:
                         for point in circle
                     ])
 
+            if self.show_eye_socket:
+                # Cuenca orbitaria: rim exterior + fondo hundido + ticks de profundidad.
+                depth = self.eye_socket_depth
+                socket_size = self.eye_socket_size
+                for side in (-1.0, 1.0):
+                    c = surf(side * eye_gap * 0.5, eye_y)
+                    rx = eye_size * (1.55 + 0.45 * self.brow_ridge)
+                    ry = eye_size * (1.20 + 0.30 * self.brow_ridge)
+                    rim = self._circle_on_plane(n_view, [c.x, c.y, c.z], 1.0, 48)
+                    feature_front.append([
+                        Vector3(c.x + (point.x - c.x) * rx,
+                                c.y + (point.y - c.y) * ry,
+                                point.z)
+                        for point in rim
+                    ])
+                    inner_c = c + Vector3(
+                        -side * eye_size * 0.28 * depth,
+                        -eye_size * 0.18 * depth,
+                        0.0,
+                    )
+                    rx2 = eye_size * (0.85 + 0.20 * socket_size)
+                    ry2 = eye_size * (0.65 + 0.20 * socket_size)
+                    bowl = self._circle_on_plane(
+                        n_view, [inner_c.x, inner_c.y, inner_c.z], 1.0, 48
+                    )
+                    feature_front.append([
+                        Vector3(inner_c.x + (point.x - inner_c.x) * rx2,
+                                inner_c.y + (point.y - inner_c.y) * ry2,
+                                point.z)
+                        for point in bowl
+                    ])
+                    tick = eye_size * 0.20 * depth
+                    if tick > EPS:
+                        for sign in (1.0, -1.0):
+                            rim_edge = Vector3(c.x, c.y + sign * ry, c.z)
+                            bowl_edge = Vector3(inner_c.x, inner_c.y + sign * ry2, inner_c.z)
+                            direction = bowl_edge - rim_edge
+                            length = direction.magnitude()
+                            if length > EPS:
+                                feature_front.append([
+                                    rim_edge,
+                                    rim_edge + direction * (tick / length),
+                                ])
+
             if self.show_brows:
                 brow_w = eye_size * 2.2
                 for side in (-1.0, 1.0):
@@ -831,6 +886,19 @@ class LoomisHead3D:
                     p1b = surf(cx, brow_y + self.brow_height * rc)
                     p2b = surf(cx + brow_w * 0.5, brow_y)
                     feature_front.append(self._quadratic(p0b, p1b, p2b))
+                    # Cresta superciliar por encima de la ceja.
+                    ridge_y = brow_y + (self.brow_height + 0.05 * self.brow_ridge) * rc
+                    r0 = surf(cx - brow_w * 0.5, ridge_y)
+                    r1 = surf(cx, ridge_y + 0.01 * rc)
+                    r2 = surf(cx + brow_w * 0.5, ridge_y)
+                    feature_front.append(self._quadratic(r0, r1, r2))
+                    ridge_tick = 0.02 * rc * self.brow_ridge
+                    if ridge_tick > EPS:
+                        apex = surf(cx, brow_y + self.brow_height * rc)
+                        feature_front.append([
+                            apex,
+                            Vector3(apex.x, apex.y + ridge_tick, apex.z),
+                        ])
 
             if self.show_nose:
                 nose_w = max(0.02, self.nose_width) * rc
@@ -1018,13 +1086,5 @@ class LoomisHead3D:
             if self.show_arrow and arrow_d:
                 svg.append(f'</g><g fill="none" title="arrow" stroke="{self.stroke_color}">')
                 svg.append(f'<path d="{arrow_d}" stroke-width="{self.front_line_stroke + 1}"/>')
-        # Sombra direccional opcional (lo aporta loomis_head/light.py).
-        try:
-            from .light import shadow_svg
-            shadow = shadow_svg(self, width, height)
-        except Exception:
-            shadow = ""
-        if shadow:
-            svg.append(shadow)
         svg.append("</g></svg>")
         return "".join(svg)
