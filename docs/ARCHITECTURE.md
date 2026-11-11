@@ -8,7 +8,8 @@ needed by the docker and the preview widget; the geometry and its tests do not i
 | File | Role |
 | --- | --- |
 | `loomis_head_generator.py` | Pure Python Loomis geometry, parameters, `to_dict`/`from_dict`, SVG |
-| `asaro.py` | Pure Python Asaro planar head: low-poly mesh, projection, SVG |
+| `asaro.py` | Pure Python Asaro planar head: mesh, projection, SVG |
+| `asaro_mesh.py` | Static Asaro mesh data: three decimated levels from the real scan, `neck` flag, cut cap |
 | `models.py` | Model registry: `MODELS`, `DEFAULT_MODEL`, `create_model`, `supported_models` |
 | `qt_compat.py` | PyQt5/PyQt6 shim: every module imports Qt from here |
 | `loomis_head_plugin.py` | Docker, Krita integration, guide manager, presets, Grimoire bridge |
@@ -40,24 +41,29 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`,
   `show_neck`, `detail` (0..2). It also carries the Loomis attributes and setters as
   defaults/no-ops so `_sync_ui_from_model` does not break; the UI hides them for Asaro.
-- **Asaro mesh v2 (0.7.2)**: the mesh is a proportioned bust drawn on one axis — height 1.5,
-  ear-to-ear 1.01, crown-to-chin depth 0.75 (0.714 of the head, 0.50 of the bust), face
-  (brow→chin) 44 % of the height and neck 30 %. It covers crown, forehead, brow, socket,
-  nose (nasion, dorsum, tip, base), maxilla, lips, mental groove, chin, jaw, ear, occiput
-  and neck. The columns are `F` (face centre), `G`, `H`, `J` and `K` (nape centre); `F` and
-  `K` are the `x == 0` vertices, so they alone define the 90° profile, while the lateral
-  strips only add creases. Faces: 60 / 80 / 100 at detail 0 / 1 / 2 with the neck
-  (52 / 72 / 92 without it). The ear is an island of two triangles; the cranial tiling is
-  deliberately coarse, with T-junctions between strips (no visible hole, fewer faces).
+- **Asaro mesh (0.7.3)**: `asaro.py` no longer builds vertices; it reads `asaro_mesh.py`,
+  which holds the decimation of `Asaro_high.obj` as static data (no OBJ, no external
+  dependency). `ASARO_LEVELS` has three levels — 334 / 634 / 1195 faces (283 / 503 / 1028
+  head faces plus 51 / 131 / 167 neck+base) with 209 / 390 / 765 vertices — and each level
+  carries `verts` (oriented +90° Y, centred, height 1.5), `faces` (counter-clockwise from
+  outside; head first, then neck), `head_faces` (how many of the first faces are head),
+  `cap` (triangles that close the cut) and `bbox`. `NECK_Y` is the height threshold that
+  split head from neck; the generator that produced this file is a temporary tool and is
+  not shipped.
 - **`show_neck`**: `AsaroHead.show_neck` (default `True`), `set_show_neck()`, `showNeck` in
   `to_dict`/`from_dict` and the **Show neck** checkbox in `AsaroPanel`
-  (`asaro.show_neck`). With the neck off, `_HALF_CLOSED_FACES` caps the jaw ring, so the
-  head remains a closed solid instead of an open hole; the cranial and facial faces are
-  the same in both modes. `test_asaro.py` locks the proportions, the profile landmarks
-  (nose step, socket depth, lips/chin step, occiput/nape curve, ear position), the neck
-  toggle and the closed cap; the suite is 73 tests (40 generator + 33 Asaro).
+  (`asaro.show_neck`). With the neck off, the faces whose `neck` flag is set are filtered
+  and the `cap` fan closes the jaw ring, so the head remains a closed solid without NaN.
+  `shade_planes` (default `True`) fills each face by normal azimuth in neutral tones
+  (opacity 0.18–0.28, no directional light) and round-trips as `shadePlanes`; `show_planes`,
+  `show_edges` and `detail` (0..2 → level) still change the SVG. `test_asaro.py` locks the
+  mesh sizes, proportions, the profile landmarks, the neck toggle/cap, `shade_planes` and
+  the round-trip; the suite is 82 tests (40 generator + 42 Asaro).
+- **License / local-only**: the mesh is derived from a downloaded scan of the Asaro head and
+  the original rights are not confirmed. 0.7.3 is a local build: no public ZIP or patch
+  until the model licence is cleared and John Asaro is credited.
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
-  is `AsaroPanel` (planes, edges, neck, detail). For Asaro the Guides and Hair tabs are
+  is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
 - `_switch_model()` stashes the outgoing model (`to_dict()`) and restores the incoming one
   from the guide's `model_states`, then always re-applies `_COMMON_STATE_FIELDS` (scale,
@@ -73,7 +79,7 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 selector, 3D preview, view selector, library and actions) and five scrollable tabs:
 **Settings**, **Move**, **Guides**, **Features** and **Hair**. The Features page hosts a
 **Model** combo and a `QStackedWidget` with `FeaturePanel` (Loomis) and `AsaroPanel`
-(planes, edges, neck, detail) from `features_dialog.py`; the Hair page hosts `HairPanel`.
+(planes, edges, shade, neck, detail) from `features_dialog.py`; the Hair page hosts `HairPanel`.
 Each panel is bound to the active model with `set_model`/`sync_from_model` when the guide or
 the model changes. With Asaro active, the Guides and Hair tabs are disabled and the Loomis-only
 Settings rows are hidden.

@@ -149,3 +149,33 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   neck not changing the head faces.
 - **Known limits**: the cranium is still boxy (it is a low-poly plane study, not a smooth
   sculpt), the ear is a wedge and the mesh is faceted in every view; no light or shadow.
+
+## 0.7.3 — 2026-11-10
+
+- **Exact Asaro mesh from the real scan** (commit `fa2acfb`): the hand-built mesh is replaced
+  by a decimated version of `Asaro_high.obj` (10,416 vertices, 20,828 triangles, Cinema 4D:
+  the planar bust with neck and base). It is stored as static data in the new
+  `loomis_head/asaro_mesh.py`: no external dependencies, no OBJ at runtime. The pipeline
+  orients (+90° Y), centres, scales to height 1.5, clusters the vertices on a grid denser
+  at the features (chin, lips, nose, eyes, ear) than at the cranium, neck and base, drops
+  degenerate/duplicate/sliver faces, splits the neck by height (`NECK_Y`) and closes the
+  cut with a fan cap.
+- **Three detail levels** (head / neck+base): detail 0 = 283 / 51 = **334 faces** (209
+  vertices), detail 1 = 503 / 131 = **634** (390), detail 2 = 1028 / 167 = **1195** (765).
+  Each level carries `verts`, `faces`, `head_faces`, `cap` and `bbox`; the profile, the 3/4
+  and the front now follow the real bust silhouette instead of a drawn one.
+- **`show_neck`** filters the neck/base faces (`neck` flag per face, stored at the end of
+  `faces`); the head stays solid because the cut is capped. **`shade_planes`** is now
+  implemented with a neutral fill per face orientation (azimuth of the normal, no
+  directional light, opacity 0.18–0.28) and round-trips as `shadePlanes`;
+  **`show_planes`**, **`show_edges`** and **`detail`** keep driving the SVG.
+- **Tests**: 82 unit tests (40 generator + 42 Asaro). The Asaro suite locks the mesh
+  proportions, the profile landmarks, the neck toggle and cap, `shade_planes` on/off
+  (`fill` present/absent), `show_planes`/`show_edges`/`detail`, the JSON round-trip and the
+  absence of degenerate faces and NaN. The offscreen docker check (72 checks) passes plus
+  the new `check_neck_ui.py` and `check_shade_planes_ui.py` checks.
+- **License notice — local build only**: the mesh is derived from a scan downloaded by the
+  user, and the rights of the original model are **not confirmed**. This release is for
+  local use: **do not redistribute the ZIP or the patch until the model licence is cleared
+  and John Asaro is credited**. `release/` keeps the 0.7.2 artifacts; there is no 0.7.3 ZIP
+  or patch.

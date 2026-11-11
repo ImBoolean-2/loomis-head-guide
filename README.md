@@ -32,11 +32,11 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 - **Two head models**: a **Model** combo switches between the **Loomis** construction and a
   low-poly **Asaro** planar bust (face contours with planes, edges, detail level and a
   neck). Each model keeps its own state, so switching back and forth does not lose features
-  or hair, and the shared position, rotation, scale and stroke follow the guide. As of 0.7.2
-  the Asaro mesh is a proportioned bust — 1.5 high, ear-to-ear ~1.0, crown-to-chin depth
-  0.71 of the head, face 44 % and neck 30 % — with forehead, brow, socket, nose, lips,
-  chin, jaw, ear, occiput and neck, and the **Show neck** toggle. It is still a faceted
-  low-poly reference, not a smooth anatomical sculpt.
+  or hair, and the shared position, rotation, scale and stroke follow the guide. As of 0.7.3
+  the Asaro mesh is an exact decimation of the real bust — 334 / 634 / 1195 faces at
+  detail 0 / 1 / 2, neck and base included — with the **Show neck** and **Shade planes**
+  toggles. It is still a faceted low-poly reference, not a smooth anatomical sculpt
+  (**local build**: not published as a ZIP until the model rights are confirmed).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
@@ -77,7 +77,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip`.
+1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 is local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -158,22 +158,29 @@ uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
 The second model is a low-poly study of the **Asaro head** (the planar head used to learn
 the planes of the face). It is drawn as face contours, not as a shaded sculpt:
 
-- **Proportions**: bust height 1.5, ear-to-ear width ~1.01 (height/width 1.485),
-  crown-to-chin depth 0.75 (0.714 of the head height), face (brow→chin) 44 % of the height
-  and neck/base 30 %.
-- **Planes**: crown, forehead, brow, orbital socket, nose (nasion, dorsum, tip, base),
-  maxilla, upper and lower lip, mental groove, chin, jaw, ear, occiput and neck. The ear is
-  a lateral wedge at brow/nose height and the nape curves into the neck.
+- **Exact mesh**: since 0.7.3 it is a decimated version of the real **Asaro_high** scan
+  (bust with neck and base), kept as static data in `loomis_head/asaro_mesh.py` — no OBJ at
+  runtime. Vertex clustering is denser at the features (chin, lips, nose, eyes, ear) than
+  at the cranium, neck and base, so the profile and the 3/4 keep the real silhouette.
+- **Detail levels** (head / neck+base): 283 / 51 = **334 faces** at detail 0,
+  503 / 131 = **634** at detail 1 and 1028 / 167 = **1195** at detail 2.
 - **Neck**: **Show neck** in the Asaro panel (`showNeck` in JSON, on by default). With it
-  off the jaw is capped and the head stays a closed solid.
-- **Controls**: planes, edges and detail (0 coarse, 1 standard, 2 fine) give 60 / 80 / 100
-  faces; no light or shadow.
-- **References**: the mesh was rebuilt against the official Asaro 3/4, front and group
-  views plus male/female bust proportion references; `heads/example-asaro.json` is the
-  shareable sample.
+  off the neck and base faces are hidden and the cut is capped, so the head stays a closed
+  solid.
+- **Shade planes**: **Shade planes** (`shadePlanes`, on by default) fills every face with
+  a neutral tone picked from its orientation — it is a plane reading, not a directional
+  light; opacity 0.18–0.28.
+- **Controls**: planes, edges, shade and detail (0 coarse, 1 standard, 2 fine).
+- **References**: mesh decimated from the downloaded Asaro scan; `heads/example-asaro.json`
+  is the shareable sample.
 
-It is deliberately a **faceted reference**: the cranium is still boxy, the ear is a wedge
-and every silhouette is a chain of segments. Use it to place planes, then draw over it.
+It is deliberately a **faceted reference**: it is a plane study, not a smooth sculpt, and
+every silhouette is a chain of segments. Use it to place planes, then draw over it.
+
+> **License / local build.** The mesh is derived from a downloaded scan of the Asaro head and
+> the rights of the original model are not confirmed. 0.7.3 is a **local build**: there is
+> no public ZIP or patch until the model rights are cleared and John Asaro is credited.
+> `release/` still carries the 0.7.2 artifacts.
 
 ## Development
 
@@ -182,7 +189,7 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The 73 unit tests (40 generator + 33 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
+The 82 unit tests (40 generator + 42 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
 needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
 
 Repository layout:
