@@ -72,9 +72,9 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 - **License**: the code is **GPL-3.0-only**; the Asaro meshes are **CC BY 4.0**, not GPL —
   derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), design by **John Asaro**;
   "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed and not used. Attribution
-  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.5
+  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.6
   is a **local build**: no public ZIP or patch until it is validated in Krita; `release/`
-  keeps the 0.7.2 artifacts, the last public build (0.7.3, 0.7.4 and 0.7.5 are local).
+  keeps the 0.7.2 artifacts, the last public build (0.7.3 to 0.7.6 are local).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
@@ -103,15 +103,26 @@ Settings rows are hidden.
   (1 px, no stroke, opacity 0) at `(position_x, position_y)` inside the layer. It does not
   change the render or the visible bounds, and it is recreated at the pivot on every draw.
 - `sync_manual_position()` (120 ms timer) reads the marker's absolute position
-  (`absoluteTransformation().map(boundingBox().center())`), never `layer.bounds()`. A manual
-  canvas move is therefore applied **1:1** to `position_x/y` once, the spinboxes update and
-  nothing is redrawn. Without a marker (legacy load) it skips the sync and waits for the next
-  draw, so there is no drift.
+  (`absoluteTransformation().map(boundingBox().center())`), never `layer.bounds()`.
+- **Layer position first (0.7.6)**: `_layer_position()` reads `Node.position()` and it is the
+  **primary** translation source — a canvas Move/Transform changes the layer even when the
+  marker's absolute transform does not reflect it. Its delta is applied **once** to
+  `position_x/y` (≥ 0.5 px threshold, spinboxes updated, no redraw), and the marker delta is
+  not added in the same pass. The `loomis-pivot` marker is the **fallback** when the layer
+  did not change or does not expose a position; with neither source nothing moves. Because
+  a manual canvas move is applied **1:1** there is no factor of 2 and no bounds conversion.
 - **Sync before the draw (0.7.5)**: `draw_lines_with_vectors()` calls `sync_manual_position()`
   **first**, before removing and recreating the shapes. The redraw builds the SVG at
   `(position_x, position_y)`, so without that call touching any docker control would snap a
   manually moved head back to its old X/Y (the B→C regression). It covers the debounced
-  redraw, model switches and type/sex changes.
+  redraw, model switches and type/sex changes. After the draw both references (layer and
+  marker) are re-read; switching guides takes the new layer as baseline without a delta.
+- **`pivot.log` (0.7.6)**: every sync with a delta and every draw append one line with a
+  timestamp to `loomis_head/pivot.log` under `QStandardPaths.AppDataLocation`
+  (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` in the flatpak): source
+  (`layer`/`marker`), layer and marker positions, `dx/dy` and `pos_before`/`pos_after`. It
+  rotates to `pivot.log.1` past 200 KB and swallows any OS error: diagnostics only, never a
+  functional path.
 - The canvas redraws after the **Input Delay** (`redrawDelay` in `settings.json`): a
   `QSpinBox` **Delay** under View, 0–5000 ms in 50 ms steps, default `REDRAW_INTERVAL_MS`
   (500 ms). The single-shot timer restarts on every slider/spin/rotation change and its
@@ -154,10 +165,14 @@ In Krita's app data directory (`QStandardPaths.AppDataLocation`):
 
 ```text
 loomis_head/
-├── settings.json   language
+├── settings.json   language and redraw delay
 ├── presets.json    named presets and per-OC presets
-└── guides.json     per-document guides: state + models stash + centre + active index
+├── guides.json     per-document guides: state + models stash + centre + active index
+└── pivot.log       diagnostics: sync source/positions and draws (rotates to .1, 200 KB)
 ```
+
+`pivot.log` is written only on a sync with a delta and on each draw, so it appears after the
+first move/redraw. It holds no document data and can be deleted at any time.
 
 Positions in `guides.json` and presets are normalised (0–1 of the document size) so they
 survive canvas size changes. The model stores document pixels; the docker converts.

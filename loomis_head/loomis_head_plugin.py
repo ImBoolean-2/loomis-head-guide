@@ -7,6 +7,7 @@ import copy
 import json
 import math
 import os
+from datetime import datetime
 from pathlib import Path
 
 from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Extension, Krita
@@ -68,6 +69,9 @@ from .loomis_head_generator import LoomisHead3D
 # el marcador se reconoce por la referencia que devuelve addShapesFromSvg (es
 # el ultimo elemento del SVG y una caja de 1 px).
 PIVOT_SHAPE_NAME = "loomis-pivot"
+# Diagnostico del pivote: pivot.log se rota a pivot.log.1 al pasar de 200 KB.
+# Solo se escribe en sync (cuando hay delta) y en cada draw, no en la preview.
+PIVOT_LOG_MAX_BYTES = 200 * 1024
 # Debounce del canvas: solo se redibuja al parar (500 ms sin cambios). La
 # preview del docker sigue en vivo en cada ``valueChanged``.
 REDRAW_INTERVAL_MS = 500
@@ -170,6 +174,16 @@ def _pivot_position(layer, shape=None):
     return _shape_document_center(found)
 
 
+def _fmt_point(point) -> str:
+    """``(x, y)`` con 1 decimal para el log; ``None`` si no hay punto."""
+    if point is None:
+        return "None"
+    try:
+        return f"{float(point[0]):.1f},{float(point[1]):.1f}"
+    except (TypeError, ValueError, IndexError):
+        return "None"
+
+
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
@@ -215,6 +229,9 @@ class LoomisProportionsDocker(DockWidget):
         # Ultima posicion absoluta del marcador de pivote: la referencia para
         # medir el desplazamiento manual del lienzo (1:1, sin bounds).
         self._last_pivot_position = None
+        # Ultima posicion de la capa (Node.position()): fuente primaria de
+        # traslacion. El marcador queda como respaldo si la capa no la expone.
+        self._last_layer_position = None
         # Shape del marcador devuelto por addShapesFromSvg (se rehace en cada
         # dibujo; None equivale a "buscarlo por nombre o por caja").
         self._pivot_shape = None
@@ -307,6 +324,33 @@ class LoomisProportionsDocker(DockWidget):
         base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
         root = Path(base) if base else Path.home() / ".local" / "share" / "krita"
         return root / "loomis_head" / "guides.json"
+
+    def _pivot_log_path(self) -> Path:
+        """``loomis_head/pivot.log`` junto a init.log (misma base)."""
+        base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+        root = Path(base) if base else Path.home() / ".local" / "share" / "krita"
+        return root / "loomis_head" / "pivot.log"
+
+    def _log_pivot(self, text: str) -> None:
+        """Anota una linea con timestamp en pivot.log; nunca lanza.
+
+        Se rota a ``pivot.log.1`` cuando pasa de ``PIVOT_LOG_MAX_BYTES``. Si el
+        directorio no existe se crea; si falla el permiso o el disco, se ignora
+        (el log es diagnostico, no funcionalidad).
+        """
+        try:
+            path = self._pivot_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if path.stat().st_size > PIVOT_LOG_MAX_BYTES:
+                    path.replace(path.with_name(path.name + ".1"))
+            except OSError:
+                pass
+            stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{stamp} {text}\n")
+        except (OSError, RuntimeError, ValueError, AttributeError):
+            pass
 
     def _load_guides_state(self) -> dict:
         try:
@@ -601,6 +645,10 @@ class LoomisProportionsDocker(DockWidget):
         self._remember_center(self._center_from_layer(guide.layer))
         self.loomis_head = guide.model
         self.loomis_layer = guide.layer
+        # Referencias de traslacion al cambiar de guia: se toman como baseline
+        # sin aplicar delta (la capa puede estar en otro sitio, no es un move).
+        # Va despues de asignar ``loomis_layer``: se lee la capa nueva.
+        self._last_layer_position = self._layer_position()
         self._last_layer_bounds_center = guide.last_center
         self._sync_panels_for_model()
         try:
@@ -731,6 +779,8 @@ class LoomisProportionsDocker(DockWidget):
             model, model_id = self._fresh_model()
             self.loomis_head = model
             self.loomis_layer = None
+            self._last_pivot_position = None
+            self._last_layer_position = None
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
@@ -1428,36 +1478,80 @@ class LoomisProportionsDocker(DockWidget):
         except (AttributeError, RuntimeError, TypeError):
             return None
 
+    def _layer_position(self):
+        """``(x, y)`` de la capa en el documento (``Node.position()``), o ``None``.
+
+        Es la fuente primaria de traslacion: cuando el usuario mueve el lienzo
+        con Move, la capa cambia de posicion aunque el marcador o su
+        transformacion absoluta no lo reflejen de forma fiable.
+        """
+        if not self.loomis_layer:
+            return None
+        try:
+            point = self.loomis_layer.position()
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        if point is None:
+            return None
+        try:
+            return (float(point.x()), float(point.y()))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            return (float(point[0]), float(point[1]))
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+
     def sync_manual_position(self):
-        """Mueve X/Y con el lienzo segun el marcador del pivote (1:1).
+        """Mueve X/Y con el lienzo segun la capa (1:1), y el marcador de respaldo.
 
-        El marcador ``loomis-pivot`` se desplaza con la capa cuando el usuario
-        usa Move/Transform. El delta que se lee aqui se suma **una sola vez** a
-        ``position_x/position_y`` (que son la posicion del pivote) y se toma el
-        marcador como nueva referencia, asi que no hay division por 2 ni
-        conversion por bounds: mover el lienzo +100 px mueve X/Y +100 px.
+        Orden de fuentes:
+          1. ``Node.position()`` de la capa (delta >= 0.5 px). Es lo que cambia
+             de verdad al mover con Move/Transform; se aplica **una sola vez** y
+             en esa pasada no se suma tambien el delta del marcador.
+          2. El marcador ``loomis-pivot`` (cuando la capa no cambio o no expone
+             posicion): delta del centro absoluto del marcador.
+          3. Ninguno: no se toca nada (nunca bounds, que deriva al rotar).
 
-        Si la capa no trae marcador (version anterior, o documento recien
-        cargado antes del primer draw) no se sincroniza nada: la posicion se
-        resuelve al redibujar, que recrea el marcador.
+        El delta se aplica a ``position_x/position_y`` (que son el pivote) sin
+        dividir ni convertir: mover +100 mueve X/Y +100.
         """
         if (not self.doc or not self.loomis_layer or not self.loomis_head
                 or self._drawing):
             return
 
-        pivot = _pivot_position(self.loomis_layer, self._pivot_shape)
-        if pivot is None:
-            return
-        if self._last_pivot_position is None:
-            self._last_pivot_position = pivot
+        layer_pos = self._layer_position()
+        marker = _pivot_position(self.loomis_layer, self._pivot_shape)
+
+        dx = dy = 0.0
+        source = None
+        if layer_pos is not None and self._last_layer_position is not None:
+            layer_dx = layer_pos[0] - self._last_layer_position[0]
+            layer_dy = layer_pos[1] - self._last_layer_position[1]
+            # Ignora ruido subpixel (redondeo de QPoint en la capa).
+            if abs(layer_dx) >= 0.5 or abs(layer_dy) >= 0.5:
+                dx, dy = layer_dx, layer_dy
+                source = "layer"
+        if (source is None and marker is not None
+                and self._last_pivot_position is not None):
+            marker_dx = marker[0] - self._last_pivot_position[0]
+            marker_dy = marker[1] - self._last_pivot_position[1]
+            if abs(marker_dx) >= 0.5 or abs(marker_dy) >= 0.5:
+                dx, dy = marker_dx, marker_dy
+                source = "marker"
+
+        if source is None:
+            # Sin cambios: solo se refrescan las referencias disponibles (una
+            # primera lectura tras cargar no debe mover la cabeza).
+            if layer_pos is not None:
+                self._last_layer_position = layer_pos
+            if marker is not None:
+                self._last_pivot_position = marker
             return
 
-        dx = pivot[0] - self._last_pivot_position[0]
-        dy = pivot[1] - self._last_pivot_position[1]
-        # Ignora ruido subpixel del redondeo de la caja del marcador.
-        if abs(dx) < 0.5 and abs(dy) < 0.5:
-            return
-
+        pos_before = (self.loomis_head.position_x, self.loomis_head.position_y)
+        last_layer_before = self._last_layer_position
+        last_marker_before = self._last_pivot_position
         self.loomis_head.set_position_x(self.loomis_head.position_x + dx)
         self.loomis_head.set_position_y(self.loomis_head.position_y + dy)
         x_blocker = QSignalBlocker(self.ui.positionXSpinBox)
@@ -1468,7 +1562,26 @@ class LoomisProportionsDocker(DockWidget):
         self._sync_transform_sliders()
         # Do not redraw here: allow Krita's active tool to finish moving the
         # existing shapes. The next Loomis control change uses the synced X/Y.
-        self._last_pivot_position = pivot
+        #
+        # Referencias nuevas: se vuelven a leer ya con el delta aplicado (la
+        # capa no cambia al mover el modelo; el marcador si, en el siguiente
+        # draw). Se registran ambas para no volver a sumar lo mismo.
+        fresh_layer = self._layer_position()
+        if fresh_layer is None:
+            fresh_layer = layer_pos
+        self._last_layer_position = fresh_layer
+        fresh_marker = _pivot_position(self.loomis_layer, self._pivot_shape)
+        if fresh_marker is None:
+            fresh_marker = marker
+        self._last_pivot_position = fresh_marker
+        self._log_pivot(
+            f"sync source={source} layer={_fmt_point(layer_pos)}"
+            f" last_layer={_fmt_point(last_layer_before)}"
+            f" marker={_fmt_point(marker)} last_marker={_fmt_point(last_marker_before)}"
+            f" dx={dx:.1f} dy={dy:.1f} pos_before="
+            f"{pos_before[0]:.1f},{pos_before[1]:.1f} pos_after="
+            f"{self.loomis_head.position_x:.1f},{self.loomis_head.position_y:.1f}"
+        )
         self._remember_center(self._layer_bounds_center())
         if hasattr(self, "_state_timer"):
             self._state_timer.start()
@@ -1497,10 +1610,12 @@ class LoomisProportionsDocker(DockWidget):
             return
 
         # Antes de leer cualquier posicion: si el usuario movio la capa con
-        # Move/Transform, el marcador esta desplazado y X/Y siguen viejos. Se
-        # adopta el marcador (1:1) para que build_svg y el marcador nuevo se
-        # creen donde el usuario lo dejo, no en la posicion anterior.
+        # Move/Transform, la capa (Node.position) y/o el marcador estan
+        # desplazados y X/Y siguen viejos. Se adopta el delta 1:1 para que
+        # build_svg y el marcador nuevo se creen donde el usuario lo dejo.
         self.sync_manual_position()
+        prev_layer = self._last_layer_position
+        prev_marker = self._last_pivot_position
 
         self._drawing = True
         try:
@@ -1527,15 +1642,29 @@ class LoomisProportionsDocker(DockWidget):
             )
             # El marcador recien creado es la nueva referencia de posicion: se
             # lee su centro en el documento (no el bbox de la capa, que cambia
-            # al rotar) para que el siguiente movimiento manual sea 1:1.
-            self._last_pivot_position = _pivot_position(self.loomis_layer, self._pivot_shape)
+            # al rotar) para que el siguiente movimiento manual sea 1:1. La
+            # posicion de la capa es la otra referencia (fuente primaria de
+            # traslacion): ambas se reajustan aqui, tras el draw.
+            self._last_pivot_position = _pivot_position(
+                self.loomis_layer, self._pivot_shape
+            )
+            self._last_layer_position = self._layer_position()
             self._last_layer_bounds_center = self._layer_bounds_center()
+            self._log_pivot(
+                f"draw pos={self.loomis_head.position_x:.1f},"
+                f"{self.loomis_head.position_y:.1f}"
+                f" layer={_fmt_point(self._last_layer_position)}"
+                f" marker={_fmt_point(self._last_pivot_position)}"
+                f" last_layer={_fmt_point(prev_layer)}"
+                f" last_marker={_fmt_point(prev_marker)}"
+            )
             guide = self.active_guide()
             if guide is not None:
                 guide.last_center = self._last_layer_bounds_center
                 guide.pivot_shape = self._pivot_shape
         except (AttributeError, RuntimeError, TypeError):
             self._last_pivot_position = None
+            self._last_layer_position = None
             self._pivot_shape = None
             self.ensure_guide()
         finally:

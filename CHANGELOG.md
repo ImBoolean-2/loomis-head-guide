@@ -252,3 +252,33 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
 - **Aviso — build local**: 0.7.5 es **solo local**. No hay **ZIP ni patch 0.7.5**; el ZIP
   público se genera solo después de validar este build en Krita. `release/` sigue con los
   artefactos **0.7.2**, que son la última build pública (0.7.3, 0.7.4 y 0.7.5 son locales).
+
+## 0.7.6 — 2026-11-11
+
+- **Fix B→C: la posición de la capa es la fuente primaria** (`Node.position()`). El
+  marcador `loomis-pivot` deja de ser la única referencia: al mover el lienzo con
+  Move/Transform la capa cambia de posición aunque la transformación absoluta del marcador
+  no lo refleje de forma fiable. `_layer_position()` lee `Node.position()` y
+  `sync_manual_position()` aplica su delta **una sola vez** a `position_x/y` (≥ 0,5 px); en
+  esa pasada no se suma también el delta del marcador. El marcador queda como **respaldo**
+  cuando la capa no cambió o no expone posición, y sin capa ni marcador no se toca nada
+  (nunca `bounds`, que deriva al rotar).
+- **Sync antes del draw**: `draw_lines_with_vectors()` sigue llamando
+  `sync_manual_position()` **antes** de borrar y recrear los shapes, y ahora reajusta
+  **ambas** referencias (capa y marcador) después del draw. Al cambiar de guía se toma la
+  capa nueva como baseline sin aplicar delta; al resetear no queda ninguna referencia.
+- **`pivot.log` de diagnóstico**: cada sync con delta y cada draw anotan una línea con
+  timestamp en `QStandardPaths.AppDataLocation/loomis_head/pivot.log`
+  (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` dentro del flatpak). Incluye
+  la fuente (`layer`/`marker`), ambas posiciones, `dx/dy` y `pos_before`/`pos_after`, para
+  ver qué cambia realmente en un Move. Se rota a `pivot.log.1` al pasar de 200 KB y nunca
+  lanza: es diagnóstico, no funcionalidad.
+- **Tests**: **121** unit tests (44 generador + 77 Asaro) en verde; `test_draw_sync.py`
+  ampliado con layer-position, respaldo de marcador, capa+marcador a la vez y `pivot.log`
+  (creación, anotación, rotación y fallo de path); `test_dashboard_070.py`,
+  `check_neck_ui.py`, `check_shade_planes_ui.py` y `check_pivot_marker.py` PASS. Sin cubrir
+  todavía: el marcador bajo undo y un Move real de canvas (necesitan documento de Krita).
+- **Aviso — build local**: 0.7.6 es **solo local**. No hay **ZIP ni patch 0.7.6**; el ZIP
+  público se genera solo después de validar este build en Krita. `release/` sigue con los
+  artefactos **0.7.2**, que son la última build pública (0.7.3, 0.7.4, 0.7.5 y 0.7.6 son
+  locales).
