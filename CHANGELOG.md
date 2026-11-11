@@ -282,3 +282,37 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   público se genera solo después de validar este build en Krita. `release/` sigue con los
   artefactos **0.7.2**, que son la última build pública (0.7.3, 0.7.4, 0.7.5 y 0.7.6 son
   locales).
+
+## 0.7.7 — 2026-11-11
+
+- **Fix B→C: el marcador `loomis-pivot` vuelve a ser la fuente primaria** del Move real.
+  La medición en Krita 5.3.4 del build 0.7.6 desmintió la hipótesis anterior: un Move de
+  canvas desplaza el contenido `+486/+588` px mientras `Node.position()` solo cambia
+  `+116/+161` px, y la rotación devuelve la capa cerca del pivote. `sync_manual_position()`
+  lee primero el delta del centro absoluto del marcador (≥ 0,5 px) y lo aplica **una sola
+  vez** a `position_x/y`; `_layer_position()`/`Node.position()` queda como **fallback**
+  cuando la capa no tiene marcador (documento legacy, capa sin dibujo). Sin ninguna de las
+  dos fuentes no se toca nada (nunca `bounds`, que deriva al rotar).
+- **Reset de capa antes de borrar/crear**: un Move deja el desplazamiento en la capa y/o
+  en la transformación de cada shape, y el SVG nuevo se creaba en `position_x/y` sumándolo
+  otra vez, así que la cabeza salía a medio camino. `_reset_layer_transform()` aplica
+  `Shape.setTransformation(QTransform())` a cada shape y `Node.move(0, 0)` antes del
+  borrado; después del draw las referencias se reajustan sobre la capa ya en el origen.
+- **`pivot.log` con el reset**: la línea de cada draw añade `reset_layer_before` y
+  `reset_layer_after` (posición de la capa antes y después del reset) además de
+  `pos_before`/`pos_after`, `source`, `layer` y `marker`, para ver en el log si el offset
+  se limpió de verdad. Sigue en `QStandardPaths.AppDataLocation/loomis_head/pivot.log`
+  (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` en el flatpak), rota a
+  `pivot.log.1` a los 200 KB y nunca lanza.
+- **Semántica — pivote ≠ Transform Position**: el **X/Y del docker es el pivote**, el punto
+  alrededor del cual gira la cabeza (centro del cráneo). El **Position** que muestra Krita
+  en la barra de Transform es el **origen de la capa o de la selección**, no el mismo
+  punto; compararlos da un desfase que no es un bug. El sync mueve el pivote, no el origen.
+- **Tests**: **121** unit tests (44 generador + 77 Asaro) en verde;
+  `test_draw_sync.py` pasa a **63 comprobaciones** (marcador primario, respaldo de capa,
+  reset de capa y `reset_layer_before/after` en `pivot.log`); `test_dashboard_070.py`,
+  `check_neck_ui.py`, `check_shade_planes_ui.py` y `check_pivot_marker.py` PASS. Sin cubrir
+  todavía: el marcador bajo undo y un Move real de canvas (necesitan documento de Krita).
+- **Aviso — build local**: 0.7.7 es **solo local**. No hay **ZIP ni patch 0.7.7**; el ZIP
+  público se genera solo después de validar este build en Krita. `release/` sigue con los
+  artefactos **0.7.2**, que son la última build pública (0.7.3 a 0.7.7 son locales).

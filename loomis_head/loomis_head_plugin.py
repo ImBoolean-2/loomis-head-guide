@@ -50,6 +50,13 @@ except AttributeError:  # pragma: no cover - bindings sin QtCore expuesto
 # ``QSpinBox`` tampoco se reexporta en qt_compat; mismo binding, mismo motivo.
 QSpinBox = qt_compat.QtWidgets.QSpinBox
 
+# ``QTransform`` identidad para limpiar la transformacion de cada shape antes
+# de redibujar (el Transform tool de Krita puede guardar ahi parte del Move).
+try:
+    QTransform = qt_compat.QtGui.QTransform
+except AttributeError:  # pragma: no cover - bindings sin QtGui expuesto
+    QTransform = None
+
 from . import i18n
 from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
 from .preview import HeadPreviewWidget
@@ -226,11 +233,12 @@ class LoomisProportionsDocker(DockWidget):
         self._state = self._load_guides_state()
         self.update_scheduled = False
         self._last_layer_bounds_center = None
-        # Ultima posicion absoluta del marcador de pivote: la referencia para
-        # medir el desplazamiento manual del lienzo (1:1, sin bounds).
+        # Ultima posicion absoluta del marcador de pivote: fuente PRIMARIA de
+        # traslacion (delta 1:1 sobre position_x/y). El marcador es lo unico que
+        # refleja el Move completo; Node.position() solo cambia en parte.
         self._last_pivot_position = None
-        # Ultima posicion de la capa (Node.position()): fuente primaria de
-        # traslacion. El marcador queda como respaldo si la capa no la expone.
+        # Ultima posicion de la capa (Node.position()): respaldo cuando la capa
+        # no trae marcador (legacy/sin dibujo) o ``Node.position()`` no existe.
         self._last_layer_position = None
         # Shape del marcador devuelto por addShapesFromSvg (se rehace en cada
         # dibujo; None equivale a "buscarlo por nombre o por caja").
@@ -1481,9 +1489,10 @@ class LoomisProportionsDocker(DockWidget):
     def _layer_position(self):
         """``(x, y)`` de la capa en el documento (``Node.position()``), o ``None``.
 
-        Es la fuente primaria de traslacion: cuando el usuario mueve el lienzo
-        con Move, la capa cambia de posicion aunque el marcador o su
-        transformacion absoluta no lo reflejen de forma fiable.
+        Solo respaldo: en Krita 5.3.4 el Move real cambia esta posicion mucho
+        menos que el contenido (medido: +116/+161 de capa frente a +486/+588
+        del marcador) y la rotacion la devuelve cerca del pivote. La fuente
+        buena del desplazamiento es el marcador ``loomis-pivot``.
         """
         if not self.loomis_layer:
             return None
@@ -1502,15 +1511,53 @@ class LoomisProportionsDocker(DockWidget):
         except (TypeError, ValueError, IndexError, KeyError):
             return None
 
+    def _reset_layer_transform(self) -> bool:
+        """Limpia la traslacion/transformacion que dejo el Move antes de dibujar.
+
+        Si solo se borran los shapes y se anade el SVG en ``position_x/y``, el
+        offset del Move (en la capa o en la transformacion de cada shape) se
+        suma otra vez y la cabeza sale a medio camino. Se neutraliza con lo que
+        expone la API:
+
+          * ``Shape.setTransformation(QTransform())`` en cada shape (el
+            Transform tool puede guardar el desplazamiento ahi);
+          * ``Node.move(0, 0)`` para devolver la capa al origen del documento.
+
+        Devuelve ``True`` si se pudo aplicar al menos un reset. Sin documento o
+        sin capa no hace nada (la preview no pasa por aqui).
+        """
+        if not self.doc or not self.loomis_layer:
+            return False
+        reset = False
+        try:
+            shapes = list(self.loomis_layer.shapes())
+        except (AttributeError, RuntimeError, TypeError):
+            shapes = []
+        if QTransform is not None:
+            for shape in shapes:
+                try:
+                    shape.setTransformation(QTransform())
+                    reset = True
+                except (AttributeError, RuntimeError, TypeError):
+                    continue
+        try:
+            self.loomis_layer.move(0, 0)
+            reset = True
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+        return reset
+
     def sync_manual_position(self):
-        """Mueve X/Y con el lienzo segun la capa (1:1), y el marcador de respaldo.
+        """Mueve X/Y con el lienzo segun el marcador de pivote (1:1).
 
         Orden de fuentes:
-          1. ``Node.position()`` de la capa (delta >= 0.5 px). Es lo que cambia
-             de verdad al mover con Move/Transform; se aplica **una sola vez** y
-             en esa pasada no se suma tambien el delta del marcador.
-          2. El marcador ``loomis-pivot`` (cuando la capa no cambio o no expone
-             posicion): delta del centro absoluto del marcador.
+          1. Marcador ``loomis-pivot`` (delta >= 0.5 px). Es la unica fuente
+             fiable del Move: ``Node.position()`` no lo refleja entero (medido
+             en Krita 5.3.4: +116/+161 de capa frente a +486/+588 del marcador)
+             y al rotar la capa vuelve cerca del pivote. Se aplica **una sola
+             vez** y en esa pasada no se suma tambien el delta de la capa.
+          2. ``Node.position()`` de la capa, **solo como respaldo** cuando no
+             hay marcador (documento legacy, capa sin dibujo).
           3. Ninguno: no se toca nada (nunca bounds, que deriva al rotar).
 
         El delta se aplica a ``position_x/position_y`` (que son el pivote) sin
@@ -1520,25 +1567,25 @@ class LoomisProportionsDocker(DockWidget):
                 or self._drawing):
             return
 
-        layer_pos = self._layer_position()
         marker = _pivot_position(self.loomis_layer, self._pivot_shape)
+        layer_pos = self._layer_position()
 
         dx = dy = 0.0
         source = None
-        if layer_pos is not None and self._last_layer_position is not None:
+        if marker is not None and self._last_pivot_position is not None:
+            marker_dx = marker[0] - self._last_pivot_position[0]
+            marker_dy = marker[1] - self._last_pivot_position[1]
+            if abs(marker_dx) >= 0.5 or abs(marker_dy) >= 0.5:
+                dx, dy = marker_dx, marker_dy
+                source = "marker"
+        if (source is None and layer_pos is not None
+                and self._last_layer_position is not None):
             layer_dx = layer_pos[0] - self._last_layer_position[0]
             layer_dy = layer_pos[1] - self._last_layer_position[1]
             # Ignora ruido subpixel (redondeo de QPoint en la capa).
             if abs(layer_dx) >= 0.5 or abs(layer_dy) >= 0.5:
                 dx, dy = layer_dx, layer_dy
                 source = "layer"
-        if (source is None and marker is not None
-                and self._last_pivot_position is not None):
-            marker_dx = marker[0] - self._last_pivot_position[0]
-            marker_dy = marker[1] - self._last_pivot_position[1]
-            if abs(marker_dx) >= 0.5 or abs(marker_dy) >= 0.5:
-                dx, dy = marker_dx, marker_dy
-                source = "marker"
 
         if source is None:
             # Sin cambios: solo se refrescan las referencias disponibles (una
@@ -1610,15 +1657,22 @@ class LoomisProportionsDocker(DockWidget):
             return
 
         # Antes de leer cualquier posicion: si el usuario movio la capa con
-        # Move/Transform, la capa (Node.position) y/o el marcador estan
-        # desplazados y X/Y siguen viejos. Se adopta el delta 1:1 para que
-        # build_svg y el marcador nuevo se creen donde el usuario lo dejo.
+        # Move/Transform, el marcador esta desplazado y X/Y siguen viejos. Se
+        # adopta el delta 1:1 del marcador para que build_svg y el marcador
+        # nuevo se creen donde el usuario lo dejo.
         self.sync_manual_position()
         prev_layer = self._last_layer_position
         prev_marker = self._last_pivot_position
 
         self._drawing = True
         try:
+            # El Move deja un offset en la capa y/o en la transformacion de los
+            # shapes. Se limpia ANTES de borrar/crear: si no, el SVG nuevo se
+            # suma a ese offset y la cabeza queda a medio camino.
+            reset_before = self._layer_position()
+            self._reset_layer_transform()
+            reset_after = self._layer_position()
+
             svg = self.loomis_head.build_svg(
                 width=self.doc.width(),
                 height=self.doc.height(),
@@ -1643,8 +1697,7 @@ class LoomisProportionsDocker(DockWidget):
             # El marcador recien creado es la nueva referencia de posicion: se
             # lee su centro en el documento (no el bbox de la capa, que cambia
             # al rotar) para que el siguiente movimiento manual sea 1:1. La
-            # posicion de la capa es la otra referencia (fuente primaria de
-            # traslacion): ambas se reajustan aqui, tras el draw.
+            # posicion de la capa (respaldo) queda en 0 tras el reset.
             self._last_pivot_position = _pivot_position(
                 self.loomis_layer, self._pivot_shape
             )
@@ -1653,6 +1706,8 @@ class LoomisProportionsDocker(DockWidget):
             self._log_pivot(
                 f"draw pos={self.loomis_head.position_x:.1f},"
                 f"{self.loomis_head.position_y:.1f}"
+                f" reset_layer_before={_fmt_point(reset_before)}"
+                f" reset_layer_after={_fmt_point(reset_after)}"
                 f" layer={_fmt_point(self._last_layer_position)}"
                 f" marker={_fmt_point(self._last_pivot_position)}"
                 f" last_layer={_fmt_point(prev_layer)}"
