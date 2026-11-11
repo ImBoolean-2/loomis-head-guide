@@ -41,7 +41,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   after the pending fixes).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
-- **Pivot and redraw (0.7.4, delay in 0.7.5, marker first in 0.7.7, Move kept in 0.7.8)**:
+- **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9)**:
   the head rotates around an invisible pivot at the centre of the skull, so rotating or
   switching model/type/sex keeps it in place. A manual Move/Transform is **captured from
   the shapes' transformation** (Krita writes it there; a vector layer keeps
@@ -51,12 +51,13 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   a redraw. The pivot is synced **before** every redraw, so touching the docker no longer
   sends the head back to its old X/Y. The docker preview is live while you drag, and the
   vector layer redraws after you stop; the **Delay** spinbox under View sets that wait
-  (0–5000 ms, 500 by default). Each sync with a delta and each draw are logged to
+  (50–5000 ms, 500 by default). Each sync with a new matrix and each draw are logged to
   `loomis_head/pivot.log` in Krita's app data directory, with `manual=` / `reapplied=`
   fields (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
-  The docker **X/Y is the effective position**: model pivot **plus** the manual Move — the
-  **Position** shown by Krita's Transform tool. Editing X/Y moves the model pivot by the
-  difference and keeps the Move, so the head does not jump or lose it.
+  The docker **X/Y is the effective position**: the model pivot passed through the **full**
+  manual matrix (`M·p + t`), which is the point the Transform tool really shows. Editing
+  X/Y solves the inverse (`M⁻¹·(target − t)`) and moves only the model pivot, so the Move
+  is kept and the head does not jump even when the layer is rotated or scaled.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
   touch the others.
 - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
@@ -95,7 +96,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 to 0.7.8 are
+1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 to 0.7.9 are
    local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
@@ -192,7 +193,8 @@ the planes of the face). It is drawn as face contours, not as a shaded sculpt:
   centroid of the head faces, `(0.0, 0.2852, -0.0354)` in mesh coordinates; for Loomis, the
   sphere centre). `position_x/y` is the pivot, so rotating or switching model/type/sex does
   not move the head. An invisible `loomis-pivot` marker in the layer tracks manual canvas
-  moves and syncs them **1:1** to X/Y.
+  moves: the Move/Transform is captured from the shapes' `transformation()`, kept in
+  `guides.json` (`transform`) and used to show the effective X/Y (`M·p + t`).
 - **Neck**: **Show neck** in the Asaro panel (`showNeck` in JSON, on by default). With it
   off the neck and base faces are hidden and the cut is capped, so the head stays a closed
   solid.
@@ -211,7 +213,7 @@ every silhouette is a chain of segments. Use it to place planes, then draw over 
 > retopologised derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), whose design is by
 > **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 > the full text and a copy-paste credit line are in
-> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.8
+> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.9
 > is a **local build**: the public ZIP ships only after validating it in Krita; until then
 > `release/` carries the 0.7.2 artifacts, the last public build.
 
@@ -222,13 +224,28 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The **128** unit tests (51 generator + 77 Asaro) do not need Krita, Qt or PyQt5. The
-UI/docker needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying
-the folder. Offscreen checks inside Krita's flatpak: `test_dashboard_070.py`,
-`test_draw_sync.py` (63 checks: sync before the draw, marker vs layer fallback and
-`pivot.log`), `test_build_078.py` (offscreen docker build: five tabs, 500 ms delay,
-`_visible_position()`), `check_neck_ui.py`, `check_shade_planes_ui.py` and
-`check_pivot_marker.py`.
+The **143** unit tests (66 generator + 77 Asaro) do not need Krita, Qt or PyQt5. The
+docker acceptance test needs Qt but **not** Krita: it builds `LoomisProportionsDocker`
+with a `krita` stub and no document (five tabs, Delay 50–5000 ms at 500, model panels and
+`_visible_position()`). It skips with `unittest.SkipTest` when no PyQt5/PyQt6 is available,
+so the plain suite stays green on a host without Qt:
+
+```bash
+# host: SKIP unless PyQt5 is installed
+python3 loomis_head/test_ui_offscreen.py
+
+# Krita's flatpak (PyQt5): real offscreen run
+flatpak run --env=QT_QPA_PLATFORM=offscreen --env=QT_QPA_PLATFORMTHEME= \
+  --command=python3 --filesystem=home --filesystem=/tmp org.kde.krita \
+  loomis_head/test_ui_offscreen.py
+```
+
+The UI checks of 0.6.x to 0.7.8 were **ad hoc scripts run inside Krita's flatpak**
+(`test_dashboard_070.py`, `test_draw_sync.py`, `test_build_078.py`, `check_neck_ui.py`,
+`check_shade_planes_ui.py`, `check_pivot_marker.py`); they were never added to the repo and
+cannot be re-run by anyone else, so only `test_ui_offscreen.py` remains as a reproducible
+check. Real canvas behaviour (a manual Move, saving and reopening a `.kra`) still has to be
+verified by hand in Krita.
 
 Repository layout:
 

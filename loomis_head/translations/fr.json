@@ -41,6 +41,7 @@
   "status.applied": "Appliqué au canvas ; le panneau reste disponible.",
   "error.title": "Erreur",
   "error.no_canvas": "Canvas introuvable. Ouvrez d'abord un document.",
+  "error.save_failed": "Impossible d’enregistrer les préréglages.",
   "error.bad_head": "Ce fichier n'est pas une tête Loomis valide.",
   "error.head_model": "Cette tête utilise un autre modèle : {model}",
   "check.zone_colors": "Couleurs par zone",

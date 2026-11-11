@@ -308,11 +308,13 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   alrededor del cual gira la cabeza (centro del cráneo). El **Position** que muestra Krita
   en la barra de Transform es el **origen de la capa o de la selección**, no el mismo
   punto; compararlos da un desfase que no es un bug. El sync mueve el pivote, no el origen.
-- **Tests**: **121** unit tests (44 generador + 77 Asaro) en verde;
-  `test_draw_sync.py` pasa a **63 comprobaciones** (marcador primario, respaldo de capa,
-  reset de capa y `reset_layer_before/after` en `pivot.log`); `test_dashboard_070.py`,
-  `check_neck_ui.py`, `check_shade_planes_ui.py` y `check_pivot_marker.py` PASS. Sin cubrir
-  todavía: el marcador bajo undo y un Move real de canvas (necesitan documento de Krita).
+- **Tests**: **121** unit tests (44 generador + 77 Asaro) en verde.
+  Las comprobaciones offscreen de la UI (`test_draw_sync.py` con 63 checks, más
+  `test_dashboard_070.py`, `check_neck_ui.py`, `check_shade_planes_ui.py` y
+  `check_pivot_marker.py`) fueron **scripts ad hoc lanzados dentro del flatpak de Krita;
+  nunca se añadieron al repositorio**, así que no son reproducibles por terceros. Sin
+  cubrir todavía: el marcador bajo undo y un Move real de canvas (necesitan documento de
+  Krita).
 - **Aviso — build local**: 0.7.7 es **solo local**. No hay **ZIP ni patch 0.7.7**; el ZIP
   público se genera solo después de validar este build en Krita. `release/` sigue con los
   artefactos **0.7.2**, que son la última build pública (0.7.3 a 0.7.7 son locales).
@@ -341,8 +343,77 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` en el flatpak).
 - **Tests**: **128** unit tests (51 generador + 77 Asaro) en verde, 7 nuevos que montan el
   docker con stubs de `krita`/Qt y cubren captura, reaplicación, reset explícito,
-  persistencia y X/Y efectivo. Build offscreen del docker (`test_build_078.py`) OK: 5 tabs,
-  delay 500 ms, `_visible_position()` presente.
+  persistencia y X/Y efectivo. El build offscreen del docker (`test_build_078.py`) también
+  fue un **script ad hoc dentro del flatpak, no incluido en el repositorio**.
 - **Aviso — build local**: 0.7.8 es **solo local**. No hay **ZIP ni patch 0.7.8**; el ZIP
   público se genera solo después de validar este build en Krita. `release/` sigue con los
   artefactos **0.7.2**, que son la última build pública (0.7.3 a 0.7.8 son locales).
+
+## 0.7.9 — 2026-11-11
+
+Fixes de la revisión de 0.7.8. Todo local, sin ZIP ni patch hasta validar en Krita.
+
+- **X/Y con la matriz completa (hallazgo A)**: `_visible_position()` devuelve
+  `M·p + t` (parte lineal incluida), no `p + (dx, dy)`. Con Transform-rotar/escalar el
+  marcador real está en `M·p + t` y la fórmula anterior se desviaba cientos de píxeles.
+  Al editar X/Y, `_set_visible_position()` resuelve `p = M_lin⁻¹·(objetivo − t)`
+  (`det = m11·m22 − m21·m12`; si `|det| < 1e-6` cae a traslación pura), así que la cabeza
+  no salta y el Move manual no se toca. Helpers nuevos `_transform_point()` y
+  `_untransform_point()`.
+- **JSON a mano que no aborta Krita (hallazgo B)**: `_num()` tolera `"abc"`, `null` y
+  listas al leer `positionX/Y`; un `guides.json` con `"guides": 5` se ignora en vez de
+  lanzar `TypeError` desde un slot Qt; `_safe_state()` descarta un `strokeColor` que no
+  cumple `#[0-9a-fA-F]{3,8}` (un `#"><svg` rompía el SVG y `from_dict` lo aceptaba).
+- **El Move guardado sobrevive a una capa a identidad (hallazgo C)**: al reabrir, si
+  `guides.json` trae `transform` pero los shapes siguen a identidad,
+  `_transform_pending_apply` conserva el valor, el sondeo de 120 ms no lo pisa y el primer
+  draw lo reaplica. Sigue mandando el canvas cuando la capa tiene un Move real. Una capa
+  vacía nunca sobrescribe el transform guardado.
+- **Input Delay 50–5000 ms (hallazgo D)**: `DELAY_MIN_MS` pasa de 0 a 50. A 0 ms cada tick
+  del slider reconstruía la capa (decenas de entradas de undo por segundo). Sigue sin
+  flush en `sliderReleased`: el retardo configurado manda. El valor se guarda en
+  `settings.json` con debounce de 600 ms (flush en `hideEvent`), no en cada paso.
+- **X/Y de un solo dueño (hallazgo E)**: se quitan los lambdas de
+  `positionXSpinBox`/`positionYSpinBox` de `connect_ui` y el bloque `disconnect` muerto de
+  `_build_transform_panel`; el panel de Mover es la única vía de lectura/escritura de X/Y.
+- **`positionUnit` respetado (hallazgo F)**: un preset con `positionUnit` distinto de
+  `normalized` usa `positionX/Y` como **píxeles** del lienzo (lo que emite `to_dict()` sin
+  documento) en vez de forzar el centro, y sin valor conserva la posición actual. Los dos
+  `heads/example-*.json` (y sus copias empaquetadas) llevan `"positionUnit": "normalized"`
+  con `0.5/0.5`, el centro del lienzo.
+- **Guardar preset no aborta (hallazgo G)**: `_write_presets()` captura `OSError` y avisa
+  con `error.save_failed`; es la única escritura de disco de un slot que no lo hacía.
+  Clave nueva en los cuatro idiomas: en “Could not save the presets.”, es “No se pudieron
+  guardar los presets.”, fr “Impossible d’enregistrer les préréglages.”, pt “Não foi
+  possível salvar os presets.”.
+- **Higiene aplicada (L1–L3, L8–L15)**: fuera el segundo capture redundante del draw y la
+  matriz construida dentro del bucle por shape; `_layer_bounds_center()` reutiliza
+  `_center_from_layer()`; versión de los docstrings de `asaro*.py` al día; `QPointF`,
+  `QSpinBox` y `QTransform` salen de `qt_compat` (`__all__` incluido); `init.log` y
+  `setup.log` rotan con el mismo helper que `pivot.log`; `_load_guides()` mapea el estado
+  por el nombre original antes de renombrar duplicadas; solo `currentColorChanged` dispara
+  el color (adiós al doble `schedule_update`); sliders X/Y con rango `-1000..2000` para
+  admitir posiciones negativas; `_model_stash` documentado como caso residual.
+- **CI**: `python -m unittest test_generator test_asaro` (antes solo corría el generador,
+  los 77 tests de Asaro nunca se ejecutaban) y `python -m py_compile loomis_head/*.py`.
+- **Tests**: **143** unit tests (66 generador + 77 Asaro) en verde, con 15 nuevos: X/Y con
+  rotación (lectura y edición), transform guardado sobre capa a identidad, capa vacía,
+  marcador con transform propio, transform más común, preset con posición no numérica,
+  preset en píxeles, preset sin posición, `strokeColor` inválido en preset y en estado
+  guardado, `guides` malformado, reset explícito, cambio de modelo y `event_xy` en Qt5/Qt6.
+  Nuevo `loomis_head/test_ui_offscreen.py`: monta el docker con PyQt5 real y un stub de
+  `krita`, sin documento (5 pestañas, Delay 50–5000/500 con el mismo intervalo en
+  `_redraw_timer`, modelo Loomis con `FeaturePanel`/`AsaroPanel`, `asaro` en el registro,
+  `_visible_position()` sin documento); da `SkipTest` en un host sin PyQt5. Las
+  comprobaciones offscreen anteriores eran ad hoc y no están en el repositorio.
+- **Docs**: `docs/ARCHITECTURE.md` describe el flujo real (captura de
+  `Shape.transformation()`, reaplicación, `guides.json → transform`, `head.layerTransform`,
+  X/Y = `M·p + t`, deltas de `pivot.log`, Delay) y deja 0.7.7 como historia; README con 143
+  tests, 0.7.9 local y la semántica nueva del Move.
+- **Licencia**: código **GPL-3.0-only**; malla Asaro **CC BY 4.0** con atribución a
+  ivan4akir/John Asaro y aviso de modificación (`LICENSE-ASSETS.md`, `CREDITS.md`).
+  Sin cambios de licencia en este release.
+- **Aviso — build local**: 0.7.9 es **solo local**. No hay **ZIP ni patch 0.7.9**; se
+  generan solo después de validar el build en Krita (Move real, guardar y reabrir el
+  `.kra`). `release/` sigue con los artefactos **0.7.2**, la última build pública
+  (0.7.3 a 0.7.9 son locales).

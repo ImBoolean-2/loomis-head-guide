@@ -14,8 +14,9 @@
     "generator": "loomis",
     "model": "loomis",
     "scale": 1.0,
-    "positionX": 0.0,
-    "positionY": 0.0,
+    "positionUnit": "normalized",
+    "positionX": 0.5,
+    "positionY": 0.5,
     "rotation": [
       1.0,
       0.0,

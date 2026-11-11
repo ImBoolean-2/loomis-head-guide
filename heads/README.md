@@ -30,6 +30,23 @@ Grimorio de Color.
     no cambian la malla.
 - `author`, `license` y `tags` son libres; sirven para acreditar y filtrar.
 
+### Posición (`positionUnit`)
+
+`positionX`/`positionY` se interpretan según `positionUnit`:
+
+| `positionUnit` | Rango | Significado |
+|---|---|---|
+| `"normalized"` | `0`..`1` | Fracción del lienzo. `0.5 / 0.5` es el **centro**, sea cual sea el tamaño del documento. Es lo que guarda el plugin cuando hay documento y lo que llevan los ejemplos. |
+| `"pixels"` | `-100000`..`100000` | Píxeles absolutos del lienzo, origen en la esquina superior izquierda. Es lo que emite un preset guardado sin documento. |
+
+- Si falta `positionUnit`, la posición se trata como **píxeles**. Si tampoco hay
+  `positionX`/`positionY`, se conserva la posición actual del modelo (no se centra).
+- Los dos ejemplos de esta carpeta (`example-head.json`, `example-asaro.json`) usan
+  `"positionUnit": "normalized"` con `positionX: 0.5` y `positionY: 0.5`: la cabeza se
+  coloca en el centro del lienzo, no en la esquina.
+- Para compartir cabezas, usa `normalized`: el mismo JSON sirve para un lienzo de 1000 px
+  y para uno de 4000 px sin retocar números.
+
 ## Convención sugerida
 
 ```text

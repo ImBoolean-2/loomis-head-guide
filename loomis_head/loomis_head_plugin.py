@@ -7,6 +7,7 @@ import copy
 import json
 import math
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -23,13 +24,16 @@ from .qt_compat import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPointF,
     QScrollArea,
     QSignalBlocker,
     QSlider,
+    QSpinBox,
     QStackedWidget,
     QStandardPaths,
     QTabWidget,
     QTimer,
+    QTransform,
     QVBoxLayout,
     QWidget,
     Qt,
@@ -38,24 +42,6 @@ from .qt_compat import (
     exec_dialog,
     uic,
 )
-from . import qt_compat
-
-# ``QPointF`` no se reexporta en qt_compat; se toma del mismo binding para no
-# importar PyQt5/PyQt6 aqui. Si no estuviera, se mapea por traslacion.
-try:
-    QPointF = qt_compat.QtCore.QPointF
-except AttributeError:  # pragma: no cover - bindings sin QtCore expuesto
-    QPointF = None
-
-# ``QSpinBox`` tampoco se reexporta en qt_compat; mismo binding, mismo motivo.
-QSpinBox = qt_compat.QtWidgets.QSpinBox
-
-# ``QTransform`` identidad para limpiar la transformacion de cada shape antes
-# de redibujar (el Transform tool de Krita puede guardar ahi parte del Move).
-try:
-    QTransform = qt_compat.QtGui.QTransform
-except AttributeError:  # pragma: no cover - bindings sin QtGui expuesto
-    QTransform = None
 
 from . import i18n
 from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
@@ -79,14 +65,69 @@ PIVOT_SHAPE_NAME = "loomis-pivot"
 # Diagnostico del pivote: pivot.log se rota a pivot.log.1 al pasar de 200 KB.
 # Solo se escribe en sync (cuando hay delta) y en cada draw, no en la preview.
 PIVOT_LOG_MAX_BYTES = 200 * 1024
+# init.log y setup.log usan el mismo limite y el mismo helper de rotacion.
+LOG_MAX_BYTES = PIVOT_LOG_MAX_BYTES
 # Debounce del canvas: solo se redibuja al parar (500 ms sin cambios). La
 # preview del docker sigue en vivo en cada ``valueChanged``.
 REDRAW_INTERVAL_MS = 500
-# Rango del "Input Delay" del docker (ms). 0 = redibujo inmediato al soltar;
-# el valor se guarda en settings.json como ``redrawDelay``.
-DELAY_MIN_MS = 0
+# Rango del "Input Delay" del docker (ms). 50 es el minimo: a 0 ms cada tick
+# del slider reconstruiria la capa (decenas de entradas de undo por segundo).
+# El valor se guarda en settings.json como ``redrawDelay``.
+DELAY_MIN_MS = 50
 DELAY_MAX_MS = 5000
 DELAY_STEP_MS = 50
+# Debounce de settings.json: el Input Delay solo se escribe al dejar de moverse.
+SETTINGS_SAVE_DELAY_MS = 600
+# Color de trazo valido: ``#rgb``, ``#rrggbb`` o ``#aarrggbb``. Evita que un
+# head JSON editado a mano meta comillas/etiquetas en el SVG.
+STROKE_COLOR_PATTERN = re.compile(r"#[0-9a-fA-F]{3,8}")
+
+
+def _num(value, default):
+    """``float(value)`` o ``default`` si no es numerico (JSON a mano)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _valid_stroke_color(value) -> bool:
+    """True si ``value`` es un color CSS seguro para el SVG."""
+    return isinstance(value, str) and STROKE_COLOR_PATTERN.fullmatch(value) is not None
+
+
+def _safe_state(state):
+    """Copia defensiva de un estado/preset sin un ``strokeColor`` invalido.
+
+    ``from_dict`` acepta ``#"><svg`` (empieza por ``#`` y mide 7), y ese valor
+    rompe el SVG. Los JSON de cabeza y de guias se editan a mano.
+    """
+    if not isinstance(state, dict):
+        return {}
+    color = state.get("strokeColor")
+    clean = dict(state)
+    if color is not None and not _valid_stroke_color(color):
+        clean.pop("strokeColor", None)
+    return clean
+
+
+def _append_log(path: Path, text: str, max_bytes: int = LOG_MAX_BYTES) -> None:
+    """Anade ``text`` a ``path`` rotando a ``path.1`` al pasar del limite.
+
+    Nunca lanza: el log es diagnostico, no funcionalidad.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if path.stat().st_size > max_bytes:
+                path.replace(path.with_name(path.name + ".1"))
+        except OSError:
+            pass
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+    except OSError:
+        pass
+
 
 
 def _clamp_delay(value) -> int:
@@ -277,6 +318,32 @@ def _transform_from_values(values):
         return matrix
 
 
+def _transform_point(values, x: float, y: float):
+    """Punto ``(x, y)`` pasado por la matriz afin completa ``M·p + t``."""
+    m11, m12, m21, m22, dx, dy = _normalize_transform(values)
+    return (
+        m11 * float(x) + m21 * float(y) + dx,
+        m12 * float(x) + m22 * float(y) + dy,
+    )
+
+
+def _untransform_point(values, x: float, y: float):
+    """Punto del documento a coordenadas del modelo: ``M_lin⁻¹·(p − t)``.
+
+    Si la parte lineal es degenerada (``|det| < TRANSFORM_EPSILON``) se cae a
+    traslacion pura, que es lo unico que aplica la herramienta Move.
+    """
+    m11, m12, m21, m22, dx, dy = _normalize_transform(values)
+    ox, oy = float(x) - dx, float(y) - dy
+    det = m11 * m22 - m21 * m12
+    if abs(det) < TRANSFORM_EPSILON:
+        return (ox, oy)
+    return (
+        (m22 * ox - m21 * oy) / det,
+        (m11 * oy - m12 * ox) / det,
+    )
+
+
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
@@ -328,8 +395,12 @@ class LoomisProportionsDocker(DockWidget):
         self._last_layer_bounds_center = None
         # Move/Transform manual de la guia activa (m11,m12,m21,m22,dx,dy).
         # Krita lo guarda en la transformacion de los shapes; el modelo no se
-        # mueve. El X/Y visible del docker es ``model.position + dx/dy``.
+        # mueve. El X/Y visible del docker es ``M·pivote + t``.
         self._manual_transform = IDENTITY_TRANSFORM
+        # True si ``_manual_transform`` viene de guides.json pero la capa
+        # todavia esta a identidad (documento recien abierto): el sondeo no
+        # debe pisarlo con identidad antes del primer draw, que lo reaplica.
+        self._transform_pending_apply = False
         # Ultima posicion absoluta del marcador de pivote. Ya no mueve el
         # modelo: el Move se conserva en ``_manual_transform``. Se usa como
         # referencia para el log y el siguiente dibujo.
@@ -356,7 +427,9 @@ class LoomisProportionsDocker(DockWidget):
         self._active_character = ""
 
         # Estado por modelo cuando no hay guia activa (misma idea que
-        # ``Guide.model_states``).
+        # ``Guide.model_states``). ``ensure_guide`` suele crear una guia, asi
+        # que en la practica casi siempre esta vacio; existe para el cambio de
+        # modelo en un docker abierto sin documento (combo Loomis/Asaro).
         self._model_stash = {}
 
         self.setWindowTitle("Loomis Method Head Guide")
@@ -412,18 +485,19 @@ class LoomisProportionsDocker(DockWidget):
 
     def hideEvent(self, event):
         self._save_doc_state()
+        # Flush del debounce de settings: el Input Delay no se pierde al cerrar.
+        self._save_settings()
+        if hasattr(self, "_settings_timer"):
+            self._settings_timer.stop()
         self.position_sync_timer.stop()
         super().hideEvent(event)
 
     def _log_init(self, text: str) -> None:
         try:
             base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-            path = Path(base or ".") / "loomis_head" / "init.log"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(text + "\n")
-        except OSError:
-            pass
+        except (AttributeError, RuntimeError, TypeError):
+            base = None
+        _append_log(Path(base or ".") / "loomis_head" / "init.log", text)
 
     def _guides_state_path(self) -> Path:
         base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
@@ -439,21 +513,14 @@ class LoomisProportionsDocker(DockWidget):
     def _log_pivot(self, text: str) -> None:
         """Anota una linea con timestamp en pivot.log; nunca lanza.
 
-        Se rota a ``pivot.log.1`` cuando pasa de ``PIVOT_LOG_MAX_BYTES``. Si el
-        directorio no existe se crea; si falla el permiso o el disco, se ignora
-        (el log es diagnostico, no funcionalidad).
+        Se rota a ``pivot.log.1`` cuando pasa de ``PIVOT_LOG_MAX_BYTES`` (igual
+        que init.log/setup.log). Si el directorio no existe se crea; si falla el
+        permiso o el disco, se ignora (el log es diagnostico, no funcionalidad).
         """
         try:
             path = self._pivot_log_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                if path.stat().st_size > PIVOT_LOG_MAX_BYTES:
-                    path.replace(path.with_name(path.name + ".1"))
-            except OSError:
-                pass
             stamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(f"{stamp} {text}\n")
+            _append_log(path, f"{stamp} {text}", PIVOT_LOG_MAX_BYTES)
         except (OSError, RuntimeError, ValueError, AttributeError):
             pass
 
@@ -536,8 +603,8 @@ class LoomisProportionsDocker(DockWidget):
         try:
             width, height = doc.width(), doc.height()
             if width and height:
-                model.set_position_x(float(state.get("positionX", 0.5)) * width)
-                model.set_position_y(float(state.get("positionY", 0.5)) * height)
+                model.set_position_x(_num(state.get("positionX"), 0.5) * width)
+                model.set_position_y(_num(state.get("positionY"), 0.5) * height)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
@@ -585,7 +652,12 @@ class LoomisProportionsDocker(DockWidget):
         transforms = {}
         model_states = {}
         if isinstance(saved, dict):
-            for item in saved.get("guides", []):
+            entries = saved.get("guides")
+            # Un guides.json editado a mano puede traer 5 en vez de una lista:
+            # iterarlo lanzaria TypeError dentro de un slot Qt.
+            if not isinstance(entries, list):
+                entries = ()
+            for item in entries:
                 if isinstance(item, dict) and item.get("name"):
                     name = str(item["name"])
                     states[name] = item.get("state")
@@ -647,9 +719,16 @@ class LoomisProportionsDocker(DockWidget):
         used = set()
         for layer in layers:
             try:
-                name = str(layer.name())
+                original = str(layer.name())
             except (AttributeError, RuntimeError, TypeError):
                 continue
+            # El estado se busca por el nombre ORIGINAL de la capa: renombrar
+            # una duplicada antes de buscarlo perderia el estado guardado.
+            state = states.get(original)
+            saved_transform = transforms.get(original)
+            saved_center = centers.get(original)
+            saved_models = model_states.get(original)
+            name = original
             if name in used or name == "Loomis Method Head Guide":
                 name = self._next_guide_name(used)
                 try:
@@ -657,14 +736,13 @@ class LoomisProportionsDocker(DockWidget):
                 except (AttributeError, RuntimeError, TypeError):
                     pass
             used.add(name)
-            state = states.get(name)
             model = None
             if isinstance(state, dict):
                 model = create_model(state.get("model", DEFAULT_MODEL))
             if model is None:
                 model = create_model(DEFAULT_MODEL) or LoomisHead3D()
             if isinstance(state, dict):
-                model.from_dict(state)
+                model.from_dict(_safe_state(state))
                 self._apply_state_position(model, doc, state)
             else:
                 center = self._center_from_layer(layer)
@@ -679,24 +757,23 @@ class LoomisProportionsDocker(DockWidget):
             marker = _find_pivot_shape(layer)
             current = self._center_from_layer(layer)
             guide_center = current
-            if guide_center is None:
-                saved_center = centers.get(name)
-                if (
-                    isinstance(saved_center, (list, tuple))
-                    and len(saved_center) == 2
-                ):
-                    try:
-                        guide_center = (
-                            float(saved_center[0]) * doc.width(),
-                            float(saved_center[1]) * doc.height(),
-                        )
-                    except (TypeError, ValueError):
-                        guide_center = None
+            if (
+                guide_center is None
+                and isinstance(saved_center, (list, tuple))
+                and len(saved_center) == 2
+            ):
+                try:
+                    guide_center = (
+                        float(saved_center[0]) * doc.width(),
+                        float(saved_center[1]) * doc.height(),
+                    )
+                except (TypeError, ValueError):
+                    guide_center = None
             guide = Guide(model, layer, name)
             guide.last_center = guide_center
             guide.pivot_shape = marker
-            guide.manual_transform = transforms.get(name, IDENTITY_TRANSFORM)
-            guide.model_states = model_states.get(name) or {}
+            guide.manual_transform = _normalize_transform(saved_transform)
+            guide.model_states = saved_models if isinstance(saved_models, dict) else {}
             self.guides.append(guide)
 
     def _create_guide(self, doc) -> None:
@@ -750,9 +827,19 @@ class LoomisProportionsDocker(DockWidget):
         self._pivot_shape = guide.pivot_shape
         self._manual_transform = _normalize_transform(guide.manual_transform)
         captured = self._capture_manual_transform(guide.layer)
-        if captured is not None and not _same_transform(captured, self._manual_transform):
-            self._manual_transform = captured
-            guide.manual_transform = captured
+        if captured is not None and not _is_identity_transform(captured):
+            # La capa tiene un Move/Transform real: el canvas manda.
+            if not _same_transform(captured, self._manual_transform):
+                self._manual_transform = captured
+                guide.manual_transform = captured
+            self._transform_pending_apply = False
+        elif not _is_identity_transform(self._manual_transform):
+            # Capa a identidad con Move guardado (p. ej. documento recien
+            # abierto): se conserva el transform y se reaplica en el primer
+            # draw; mientras tanto el sondeo no lo pisa con identidad.
+            self._transform_pending_apply = True
+        else:
+            self._transform_pending_apply = False
         self._last_pivot_position = _pivot_position(guide.layer, self._pivot_shape)
         self._remember_center(self._center_from_layer(guide.layer))
         self.loomis_head = guide.model
@@ -958,8 +1045,9 @@ class LoomisProportionsDocker(DockWidget):
             self.ui.strokeColorSwatch.setStyleSheet(f"background-color: {hex_rgb}; border: 1px solid #666;")
             self.schedule_update()
 
+        # ``currentColorChanged`` basta: ``colorSelected`` duplicaba el mismo
+        # slot (dos schedule_update por clic) y no aporta nada aqui.
         dlg.currentColorChanged.connect(apply_color)
-        dlg.colorSelected.connect(apply_color)
 
         def revert():
             self.loomis_head.set_stroke_color(old_hex)
@@ -984,7 +1072,8 @@ class LoomisProportionsDocker(DockWidget):
             row.addWidget(slider, 1)
             row.addWidget(value)
             form.addRow(label, row)
-            slider.setRange(0, 1000)
+            # X/Y admiten negativos (el spin va a -100000): rango -w..2w.
+            slider.setRange(-1000, 2000)
         self.rotXSlider = QSlider(Qt.Horizontal)
         self.rotYSlider = QSlider(Qt.Horizontal)
         self.rotZSlider = QSlider(Qt.Horizontal)
@@ -1003,14 +1092,6 @@ class LoomisProportionsDocker(DockWidget):
             slider.setRange(-180, 180)
         self.posXSlider.valueChanged.connect(self._on_pos_x_slider)
         self.posYSlider.valueChanged.connect(self._on_pos_y_slider)
-        for signal, slot in (
-            (self.ui.positionXSpinBox.valueChanged, self._on_pos_x_spin),
-            (self.ui.positionYSpinBox.valueChanged, self._on_pos_y_spin),
-        ):
-            try:
-                signal.disconnect(slot)
-            except TypeError:
-                pass
         self.ui.positionXSpinBox.valueChanged.connect(self._on_pos_x_spin)
         self.ui.positionYSpinBox.valueChanged.connect(self._on_pos_y_spin)
         for slider in (self.rotXSlider, self.rotYSlider, self.rotZSlider):
@@ -1022,10 +1103,12 @@ class LoomisProportionsDocker(DockWidget):
     def _refresh_transform_ranges(self) -> None:
         if not hasattr(self, "posXSlider"):
             return
-        width = self.doc.width() if self.doc else 1000
-        height = self.doc.height() if self.doc else 1000
-        self.posXSlider.setRange(0, max(1, width))
-        self.posYSlider.setRange(0, max(1, height))
+        width = max(1, self.doc.width() if self.doc else 1000)
+        height = max(1, self.doc.height() if self.doc else 1000)
+        # El X/Y efectivo puede ser negativo (Move/Transform fuera del lienzo);
+        # con 0..ancho el slider se clavaba en 0 y resincronizaba en bucle.
+        self.posXSlider.setRange(-width, 2 * width)
+        self.posYSlider.setRange(-height, 2 * height)
 
     def _on_pos_x_slider(self, value: int) -> None:
         if self._slider_sync or self.loomis_head is None:
@@ -1212,8 +1295,8 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.sizeSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_scale(v * 0.01)))
         self.ui.sideCutSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_sidecut(v * 0.01)))
         self.ui.faceAgeSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_face_age(v * 0.01)))
-        self.ui.positionXSpinBox.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_position_x(v)))
-        self.ui.positionYSpinBox.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_position_y(v)))
+        # X/Y los gobierna el panel de Move (``_on_pos_x_spin``), que ademas
+        # compensa el transform manual; no se conectan aqui.
         self.ui.chinWidthSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_chin_width(v * 0.01)))
         self.ui.showFace.toggled.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_show_face(v)))
         self.ui.frontStrokeSlider.valueChanged.connect(
@@ -1281,6 +1364,12 @@ class LoomisProportionsDocker(DockWidget):
             _clamp_delay(self._settings.get("redrawDelay", REDRAW_INTERVAL_MS))
         )
         self.delaySpin.setToolTip(t("delay.tooltip"))
+        # settings.json no se reescribe en cada paso del spinbox: un debounce
+        # guarda al dejar de moverse (y hideEvent hace flush).
+        self._settings_timer = QTimer(self)
+        self._settings_timer.setSingleShot(True)
+        self._settings_timer.setInterval(SETTINGS_SAVE_DELAY_MS)
+        self._settings_timer.timeout.connect(self._save_settings)
         # Conectar despues de fijar el valor: el arranque no reescribe settings.
         self.delaySpin.valueChanged.connect(self._on_delay_changed)
         delay_row = QHBoxLayout()
@@ -1588,22 +1677,17 @@ class LoomisProportionsDocker(DockWidget):
         if hasattr(self, "_redraw_timer"):
             self._redraw_timer.setInterval(delay)
         self._settings["redrawDelay"] = delay
-        self._save_settings()
+        # Debounce: el disco solo se toca al parar (o al ocultar el docker).
+        if hasattr(self, "_settings_timer"):
+            self._settings_timer.start()
 
     # create_loomis_layer se sustituyo por _create_guide/ensure_guide.
 
     def _layer_bounds_center(self):
-        """Return vector layer content center in document pixels, if available."""
+        """Centro del contenido de la capa en pixeles, si existe."""
         if not self.loomis_layer:
             return None
-        try:
-            bounds = self.loomis_layer.bounds()
-            if bounds is None or bounds.isNull() or bounds.isEmpty():
-                return None
-            return (bounds.x() + bounds.width() / 2.0,
-                    bounds.y() + bounds.height() / 2.0)
-        except (AttributeError, RuntimeError, TypeError):
-            return None
+        return self._center_from_layer(self.loomis_layer)
 
     def _layer_position(self):
         """``(x, y)`` de la capa en el documento (``Node.position()``), o ``None``.
@@ -1677,6 +1761,10 @@ class LoomisProportionsDocker(DockWidget):
         values = _normalize_transform(values)
         if _is_identity_transform(values):
             return False
+        # La matriz se construye una vez, no por shape.
+        matrix = _transform_from_values(values)
+        if matrix is None:
+            return False
         if shapes is None:
             try:
                 shapes = list(self.loomis_layer.shapes()) if self.loomis_layer else []
@@ -1684,9 +1772,6 @@ class LoomisProportionsDocker(DockWidget):
                 shapes = []
         applied = False
         for shape in shapes:
-            matrix = _transform_from_values(values)
-            if matrix is None:
-                break
             try:
                 shape.setTransformation(matrix)
                 applied = True
@@ -1711,19 +1796,19 @@ class LoomisProportionsDocker(DockWidget):
                 continue
         return reset
 
-    def _manual_transform_offset(self):
-        """``(dx, dy)`` del Move/Transform manual de la guia activa."""
-        values = _normalize_transform(
-            getattr(self, "_manual_transform", IDENTITY_TRANSFORM)
-        )
-        return values[4], values[5]
-
     def _visible_position(self):
-        """X/Y que muestra la herramienta: pivote del modelo + Move manual."""
+        """X/Y que muestra la herramienta: ``M·pivote + t`` del Move/Transform.
+
+        La transformacion completa (no solo la traslacion) importa: con
+        Transform-rotar/escalar el marcador real esta en ``M·p + t``, y el
+        docker tiene que mostrar ese punto, no ``p + t``.
+        """
         if self.loomis_head is None:
             return (0.0, 0.0)
-        dx, dy = self._manual_transform_offset()
-        return (self.loomis_head.position_x + dx, self.loomis_head.position_y + dy)
+        values = getattr(self, "_manual_transform", IDENTITY_TRANSFORM)
+        return _transform_point(
+            values, self.loomis_head.position_x, self.loomis_head.position_y
+        )
 
     def _refresh_visible_position(self) -> None:
         """Escribe el X/Y efectivo en los spinboxes (sin disparar senales)."""
@@ -1755,21 +1840,22 @@ class LoomisProportionsDocker(DockWidget):
     def _set_visible_position(self, x=None, y=None) -> None:
         """Lleva el X/Y visible al valor pedido moviendo el modelo.
 
-        El Move manual no se toca (es el offset de la herramienta): se
-        desplaza el pivote por la diferencia, de modo que
-        ``modelo + manual`` cae exactamente en ``x``/``y``.
+        El Move manual no se toca (es la transformacion de la herramienta): se
+        resuelve ``p = M_lin⁻¹·(objetivo − t)``, de modo que ``M·p + t`` cae
+        exactamente en ``x``/``y`` aunque la capa este rotada o escalada.
         """
         if self.loomis_head is None:
             return
         visible_x, visible_y = self._visible_position()
-        if x is not None:
-            self.loomis_head.set_position_x(
-                self.loomis_head.position_x + (float(x) - visible_x)
-            )
-        if y is not None:
-            self.loomis_head.set_position_y(
-                self.loomis_head.position_y + (float(y) - visible_y)
-            )
+        target_x = visible_x if x is None else float(x)
+        target_y = visible_y if y is None else float(y)
+        position_x, position_y = _untransform_point(
+            getattr(self, "_manual_transform", IDENTITY_TRANSFORM),
+            target_x,
+            target_y,
+        )
+        self.loomis_head.set_position_x(position_x)
+        self.loomis_head.set_position_y(position_y)
         self.schedule_update()
 
     def sync_manual_position(self):
@@ -1780,7 +1866,7 @@ class LoomisProportionsDocker(DockWidget):
         no lo refleja y ``Node.bounds()`` deriva al rotar. Aqui solo se captura
         esa transformacion y se guarda en la guia: el pivote del modelo no se
         toca, y el X/Y del docker pasa a ser la posicion efectiva
-        (``modelo + dx/dy``), que es el "Position" de la herramienta.
+        (``M·pivote + t``, el "Position" de la herramienta).
 
         No se redibuja: la herramienta esta moviendo los shapes actuales y el
         canvas se reconstruye en el siguiente ``draw`` (Input Delay), donde la
@@ -1791,7 +1877,16 @@ class LoomisProportionsDocker(DockWidget):
             return
 
         captured = self._capture_manual_transform()
-        if captured is not None and not _same_transform(captured, self._manual_transform):
+        if (
+            captured is not None
+            and not _same_transform(captured, self._manual_transform)
+            # Un transform guardado pendiente de reaplicar no se pierde porque
+            # la capa aun este a identidad (el draw lo aplica en 500 ms).
+            and not (
+                getattr(self, "_transform_pending_apply", False)
+                and _is_identity_transform(captured)
+            )
+        ):
             previous = _normalize_transform(self._manual_transform)
             self._manual_transform = captured
             guide = self.active_guide()
@@ -1840,12 +1935,6 @@ class LoomisProportionsDocker(DockWidget):
         self.sync_manual_position()
         prev_layer = self._last_layer_position
         prev_marker = self._last_pivot_position
-        captured = self._capture_manual_transform()
-        if captured is not None:
-            self._manual_transform = captured
-            guide = self.active_guide()
-            if guide is not None:
-                guide.manual_transform = captured
 
         self._drawing = True
         try:
@@ -1871,6 +1960,9 @@ class LoomisProportionsDocker(DockWidget):
             # asi su posicion absoluta queda donde el usuario lo dejo y no se
             # pierde al rotar/cambiar el modelo.
             reapplied = self._apply_manual_transform(self._manual_transform, added)
+            # Ya esta en los shapes nuevos (o era identidad): el sondeo puede
+            # volver a capturar sin miedo.
+            self._transform_pending_apply = False
             self._pivot_shape = next(
                 (shape for shape in reversed(added) if _is_pivot_shape(shape)), None
             )
@@ -1944,6 +2036,7 @@ class LoomisProportionsDocker(DockWidget):
         # manual. Si no se limpiara tambien en los shapes actuales, el sync
         # siguiente lo volveria a capturar antes de que el canvas se redibuje.
         self._manual_transform = IDENTITY_TRANSFORM
+        self._transform_pending_apply = False
         guide = self.active_guide()
         if guide is not None:
             guide.manual_transform = IDENTITY_TRANSFORM
@@ -1996,11 +2089,24 @@ class LoomisProportionsDocker(DockWidget):
         if isinstance(raw.get("characters"), dict):
             self._presets["characters"] = raw["characters"]
 
-    def _write_presets(self) -> None:
-        self._presets_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self._presets_path.with_name(self._presets_path.name + ".tmp")
-        temp.write_text(json.dumps(self._presets, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(temp, self._presets_path)
+    def _write_presets(self) -> bool:
+        """Escribe presets.json; un fallo de disco se avisa, no lanza.
+
+        Es una escritura desde un slot Qt: sin ``OSError`` capturado, un disco
+        lleno abortaria Krita. Devuelve ``False`` si no se pudo guardar.
+        """
+        try:
+            self._presets_path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self._presets_path.with_name(self._presets_path.name + ".tmp")
+            temp.write_text(json.dumps(self._presets, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, self._presets_path)
+            return True
+        except OSError:
+            message = t("error.save_failed")
+            if message == "error.save_failed":  # clave aun no traducida
+                message = "Could not save the presets."
+            self.ui.presetStatus.setText(message)
+            return False
 
     def _bind_library(self) -> None:
         activated_text(self.ui.presetCombo).connect(self._on_preset_activated)
@@ -2209,10 +2315,13 @@ class LoomisProportionsDocker(DockWidget):
             return False
         target["head"] = data
         backup = path.with_name(path.name + ".loomis.bak")
+        backup_tmp = path.with_name(path.name + ".loomis.bak.tmp")
         temp = path.with_name(path.name + ".loomis.tmp")
         try:
-            if not backup.exists():
-                backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            # Backup en CADA escritura (no solo la primera): el Grimorio puede
+            # haber guardado cambios de color desde la ultima vez.
+            backup_tmp.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.replace(backup_tmp, backup)
             temp.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(temp, path)
         except OSError:
@@ -2229,7 +2338,8 @@ class LoomisProportionsDocker(DockWidget):
             return
         data = self._capture_preset()
         self._presets.setdefault("characters", {})[cid] = data
-        self._write_presets()
+        if not self._write_presets():
+            return
         self._heads[cid] = data
         wrote_json = self._write_head_to_grimorio(cid, data)
         key = "status.saved_oc_json" if wrote_json else "status.saved_oc_sidecar"
@@ -2268,7 +2378,8 @@ class LoomisProportionsDocker(DockWidget):
     def _save_preset(self) -> None:
         name = self.ui.presetCombo.currentText().strip() or "Preset"
         self._presets.setdefault("presets", {})[name] = self._capture_preset()
-        self._write_presets()
+        if not self._write_presets():
+            return
         self._refresh_presets(name)
         self.ui.presetStatus.setText(t("status.saved", name=name))
 
@@ -2277,14 +2388,17 @@ class LoomisProportionsDocker(DockWidget):
         presets = self._presets.get("presets", {})
         if name in presets:
             del presets[name]
-            self._write_presets()
+            if not self._write_presets():
+                return
             self._refresh_presets("")
             self.ui.presetStatus.setText(t("status.deleted", name=name))
         else:
             self.ui.presetStatus.setText(t("status.missing", name=name))
 
     def apply_preset(self, data: dict) -> None:
-        data = data if isinstance(data, dict) else {}
+        # Copia defensiva: un ``strokeColor`` invalido (``#"><svg``) rompe el
+        # SVG y ``from_dict`` lo acepta, asi que se descarta antes de aplicarlo.
+        data = _safe_state(data)
         target = str(data.get("model") or self._current_model_id() or DEFAULT_MODEL).strip().lower()
         if target not in supported_models():
             target = self._current_model_id()
@@ -2304,16 +2418,34 @@ class LoomisProportionsDocker(DockWidget):
                 self._set_shapes_identity()
             else:
                 self._apply_manual_transform(layer_transform)
+        self._transform_pending_apply = False
         doc, width, height = self._doc_size()
         normalized = data.get("positionUnit") == "normalized"
-        nx = float(data.get("positionX", 0.5)) if normalized else 0.5
-        ny = float(data.get("positionY", 0.5)) if normalized else 0.5
-        if doc and width and height and self.loomis_layer is not None:
-            self.loomis_head.set_position_x(nx * width)
-            self.loomis_head.set_position_y(ny * height)
-            self._pending_position = None
+        # ``_num`` tolera "abc"/null en un JSON editado a mano: dentro de un
+        # slot Qt, float("abc") abortaria Krita.
+        if normalized:
+            value_x = _num(data.get("positionX"), 0.5)
+            value_y = _num(data.get("positionY"), 0.5)
         else:
-            self._pending_position = (nx, ny)
+            # Pixeles: sin valor se conserva la posicion actual, no se fuerza
+            # el centro (los presets guardados sin documento no la traen).
+            value_x = _num(data.get("positionX"), self.loomis_head.position_x)
+            value_y = _num(data.get("positionY"), self.loomis_head.position_y)
+        if doc and width and height and self.loomis_layer is not None:
+            if normalized:
+                position_x, position_y = value_x * width, value_y * height
+            else:
+                # ``pixels`` (lo que emite ``_capture_preset`` sin documento):
+                # los valores ya son pixeles del lienzo, no se reescalan.
+                position_x, position_y = value_x, value_y
+            self.loomis_head.set_position_x(position_x)
+            self.loomis_head.set_position_y(position_y)
+            self._pending_position = None
+        elif normalized:
+            self._pending_position = (value_x, value_y)
+        else:
+            # Sin documento no hay lienzo al que referir los pixeles.
+            self._pending_position = (0.5, 0.5)
         self.trackball.set_quaternion(self.loomis_head.q)
         self._sync_ui_from_model()
         self._sync_euler_from_model()
@@ -2487,12 +2619,12 @@ class LoomisHeadPlugin(Extension):
 
     def setup(self):
         # Los dockers se registran en setup(), no al importar el paquete.
-        log_path = None
         try:
             base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-            log_dir = Path(base or ".") / "loomis_head"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / "setup.log"
+        except (AttributeError, RuntimeError, TypeError):
+            base = None
+        log_path = Path(base or ".") / "loomis_head" / "setup.log"
+        try:
             Krita.instance().addDockWidgetFactory(
                 DockWidgetFactory(
                     "loomis_head",
@@ -2500,16 +2632,11 @@ class LoomisHeadPlugin(Extension):
                     LoomisProportionsDocker,
                 )
             )
-            with log_path.open("a", encoding="utf-8") as handle:
-                handle.write("docker registered\n")
+            _append_log(log_path, "docker registered")
         except Exception:
             import traceback
-            if log_path is not None:
-                try:
-                    with log_path.open("a", encoding="utf-8") as handle:
-                        handle.write(traceback.format_exc() + "\n")
-                except OSError:
-                    pass
+
+            _append_log(log_path, traceback.format_exc())
             raise
 
     def createActions(self, window):

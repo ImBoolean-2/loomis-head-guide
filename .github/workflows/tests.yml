@@ -14,9 +14,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Generator tests
+      - name: Unit tests
         working-directory: loomis_head
-        run: python -m unittest test_generator.py -v
+        run: python -m unittest test_generator test_asaro -v
+
+      - name: Compile modules
+        run: python -m py_compile loomis_head/*.py
 
       - name: Translations and UI XML
         run: |

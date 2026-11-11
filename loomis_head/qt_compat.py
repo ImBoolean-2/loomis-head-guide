@@ -36,6 +36,7 @@ except ImportError:  # Krita 6.x
 QByteArray = QtCore.QByteArray
 QDateTime = QtCore.QDateTime
 QLocale = QtCore.QLocale
+QPointF = QtCore.QPointF
 QRect = QtCore.QRect
 QSignalBlocker = QtCore.QSignalBlocker
 QStandardPaths = QtCore.QStandardPaths
@@ -47,6 +48,7 @@ QBrush = QtGui.QBrush
 QColor = QtGui.QColor
 QPainter = QtGui.QPainter
 QPen = QtGui.QPen
+QTransform = QtGui.QTransform
 
 # --- QtWidgets --------------------------------------------------------------
 QCheckBox = QtWidgets.QCheckBox
@@ -62,6 +64,7 @@ QLabel = QtWidgets.QLabel
 QScrollArea = QtWidgets.QScrollArea
 QSizePolicy = QtWidgets.QSizePolicy
 QSlider = QtWidgets.QSlider
+QSpinBox = QtWidgets.QSpinBox
 QStackedWidget = QtWidgets.QStackedWidget
 QTabWidget = QtWidgets.QTabWidget
 QVBoxLayout = QtWidgets.QVBoxLayout
@@ -169,16 +172,19 @@ __all__ = [
     "QLocale",
     "QPainter",
     "QPen",
+    "QPointF",
     "QRect",
     "QScrollArea",
     "QSignalBlocker",
     "QSizePolicy",
     "QSlider",
+    "QSpinBox",
     "QStackedWidget",
     "QStandardPaths",
     "QSvgRenderer",
     "QTabWidget",
     "QTimer",
+    "QTransform",
     "QVBoxLayout",
     "QWidget",
     "Qt",

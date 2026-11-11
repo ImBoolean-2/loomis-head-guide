@@ -39,6 +39,7 @@
   "status.applied": "Aplicado al lienzo; el panel sigue disponible.",
   "error.title": "Error",
   "error.no_canvas": "No encuentro el lienzo. Abre un documento primero.",
+  "error.save_failed": "No se pudieron guardar los presets.",
   "features.title": "Rasgos y caricatura",
   "features.master": "Mostrar rasgos faciales",
   "features.section.caricature": "Caricatura",

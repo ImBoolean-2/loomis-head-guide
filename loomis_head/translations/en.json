@@ -39,6 +39,7 @@
   "status.applied": "Applied to canvas; the panel stays available.",
   "error.title": "Error",
   "error.no_canvas": "Can't find your canvas. Open a document first.",
+  "error.save_failed": "Could not save the presets.",
   "features.title": "Features & caricature",
   "features.master": "Show facial features",
   "features.section.caricature": "Caricature",

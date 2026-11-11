@@ -12,7 +12,7 @@ Modificaciones de este proyecto: decimacion de la malla de origen, medida de
 secciones y retopo de planos (esta malla). Esta malla retopologizada se
 distribuye como el resto de las mallas Asaro bajo **CC BY 4.0**, con atribucion
 y aviso de modificacion; el codigo sigue GPL-3.0-only. El OBJ original no se
-redistribuye. La version 0.7.4 es **local**: el ZIP publico sale solo tras
+redistribuye. La version 0.7.9 es **local**: el ZIP publico sale solo tras
 validarla en Krita. Ver ``LICENSE-ASSETS.md`` y ``CREDITS.md``.
 
 Origen y metodo

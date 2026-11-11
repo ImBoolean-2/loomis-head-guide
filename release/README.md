@@ -1,8 +1,9 @@
 # Release
 
-`loomis-head-guide-0.7.2.zip` is the installable package. Its root contains
-`loomis_head/` and `loomis_head.desktop`, so Krita's **Tools → Scripts → Import Python
-Plugins** accepts it directly.
+`loomis-head-guide-0.7.2.zip` is the installable package, and the **last public build**:
+0.7.3 to 0.7.9 are local-only, so there is no ZIP or patch for them until the current build
+is validated in Krita. Its root contains `loomis_head/` and `loomis_head.desktop`, so
+Krita's **Tools → Scripts → Import Python Plugins** accepts it directly.
 
 The ZIP is built from the `loomis_head/` folder in this repository:
 
@@ -26,6 +27,6 @@ zip -r release/loomis-head-guide-0.7.2.zip loomis_head loomis_head.desktop \
 ## Checks before publishing
 
 ```bash
-cd loomis_head && python3 -m unittest test_generator test_asaro   # 73 tests
+cd loomis_head && python3 -m unittest test_generator test_asaro   # 73 tests in 0.7.2
 cd .. && unzip -l release/loomis-head-guide-0.7.2.zip | grep -E 'models|asaro|qt_compat'
 ```

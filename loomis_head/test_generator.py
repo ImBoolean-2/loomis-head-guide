@@ -826,6 +826,9 @@ def _plugin():
     qt.QtCore = types.SimpleNamespace(QPointF=_FakePoint, QLocale=None)
     qt.QtWidgets = types.SimpleNamespace(QSpinBox=_Widget)
     qt.QtGui = types.SimpleNamespace(QTransform=_FakeTransform)
+    qt.QPointF = _FakePoint
+    qt.QSpinBox = _Widget
+    qt.QTransform = _FakeTransform
     qt.EXPANDING = object()
     qt.Qt = types.SimpleNamespace()
     qt.pyqtSignal = lambda *args, **kwargs: _Signal()
@@ -890,6 +893,7 @@ class LayerTransformTests(unittest.TestCase):
         docker.guides = [plugin.Guide(model, layer, "Loomis Head 1")] if guides else []
         docker.active_index = 0
         docker._manual_transform = plugin.IDENTITY_TRANSFORM
+        docker._transform_pending_apply = False
         docker._pivot_shape = None
         docker._last_pivot_position = None
         docker._last_layer_position = None
@@ -905,6 +909,16 @@ class LayerTransformTests(unittest.TestCase):
         docker._log_pivot = lambda text: None
         docker.schedule_update = lambda: None
         docker.ensure_guide = lambda: None
+        # Dependencias de UI que ``_set_active_guide``/``_switch_model`` tocan;
+        # aqui solo interesa la logica de transformacion.
+        docker.trackball = types.SimpleNamespace(
+            set_model=lambda model: None,
+            set_quaternion=lambda q: None,
+        )
+        docker._sync_panels_for_model = lambda *args: None
+        docker._sync_ui_from_model = lambda: None
+        docker._sync_euler_from_model = lambda: None
+        docker._refresh_guide_combo = lambda: None
         return docker
 
     def _move_by(self, dx, dy):
@@ -1033,6 +1047,248 @@ class LayerTransformTests(unittest.TestCase):
         for shape in self.layer.shapes():
             self.assertAlmostEqual(shape.transformation().dx(), -40.0)
             self.assertAlmostEqual(shape.transformation().dy(), -10.0)
+
+    # --- 0.7.8: matriz completa, presets tolerantes, reapertura ------------
+
+    @staticmethod
+    def _rotated(degrees, dx=0.0, dy=0.0):
+        angle = math.radians(degrees)
+        return (
+            math.cos(angle), math.sin(angle),
+            -math.sin(angle), math.cos(angle),
+            float(dx), float(dy),
+        )
+
+    def test_visible_xy_matches_the_marker_with_rotation(self):
+        """X/Y es ``M·p + t``, no ``p + t`` (una capa rotada no engaña)."""
+        self.docker._manual_transform = self._rotated(30.0)
+        visible_x, visible_y = self.docker._visible_position()
+
+        angle = math.radians(30.0)
+        expected_x = math.cos(angle) * 1660.0 - math.sin(angle) * 447.0
+        expected_y = math.sin(angle) * 1660.0 + math.cos(angle) * 447.0
+        self.assertAlmostEqual(visible_x, expected_x, places=6)
+        self.assertAlmostEqual(visible_y, expected_y, places=6)
+        self.assertNotAlmostEqual(visible_x, 1660.0, places=1)
+
+        # El marcador reaplicado queda en el punto que muestra el docker.
+        self.docker.draw_lines_with_vectors(samples=16)
+        self.assertAlmostEqual(self.docker._last_pivot_position[0], visible_x, places=3)
+        self.assertAlmostEqual(self.docker._last_pivot_position[1], visible_y, places=3)
+
+    def test_editing_xy_with_rotation_keeps_the_marker_at_the_value(self):
+        """Editar X/Y invierte la parte lineal: el marcador cae en el valor."""
+        self.docker._manual_transform = self._rotated(30.0)
+        self.docker._set_visible_position(x=900.0, y=300.0)
+
+        visible_x, visible_y = self.docker._visible_position()
+        self.assertAlmostEqual(visible_x, 900.0, places=6)
+        self.assertAlmostEqual(visible_y, 300.0, places=6)
+        # No se llego por traslacion pura: el modelo no esta en el valor.
+        self.assertFalse(
+            math.isclose(self.model.position_x, 900.0)
+            and math.isclose(self.model.position_y, 300.0)
+        )
+
+        # Editar solo X conserva la Y visible.
+        self.docker._set_visible_position(x=1000.0)
+        visible_x, visible_y = self.docker._visible_position()
+        self.assertAlmostEqual(visible_x, 1000.0, places=6)
+        self.assertAlmostEqual(visible_y, 300.0, places=6)
+
+    def test_preset_with_non_numeric_position_does_not_raise(self):
+        """``positionX: "abc"``/null/lista no lanza dentro del slot Qt."""
+        self._stub_preset_dependencies()
+        for value in ("abc", None, []):
+            with self.subTest(value=value):
+                self.docker.apply_preset({
+                    "model": "loomis",
+                    "positionUnit": "normalized",
+                    "positionX": value,
+                    "positionY": value,
+                })
+                self.assertAlmostEqual(self.model.position_x, 1000.0)
+                self.assertAlmostEqual(self.model.position_y, 500.0)
+
+    def test_malformed_guides_entry_is_ignored(self):
+        """``{"guides": 5}`` o un ``center`` invalido no rompen la carga."""
+        other = self._make_docker(_FakeLayer([]), LoomisHead3D(), self.doc, guides=False)
+        other._load_guides(self.doc, {"guides": 5})
+        self.assertEqual(len(other.guides), 1)
+        self.assertEqual(other.guides[0].manual_transform, self.plugin.IDENTITY_TRANSFORM)
+
+        other = self._make_docker(_FakeLayer([]), LoomisHead3D(), self.doc, guides=False)
+        other._load_guides(
+            self.doc, {"guides": [{"name": "Loomis Head 1", "center": "x"}]}
+        )
+        self.assertEqual(len(other.guides), 1)
+
+    def test_saved_transform_survives_a_layer_with_identity_shapes(self):
+        """Reabrir: capa a identidad + Move guardado conserva el Move."""
+        layer = _FakeLayer([
+            _FakeShape("path-front", (0.0, 0.0, 10.0, 10.0)),
+            _FakeShape("path-back", (0.0, 0.0, 10.0, 10.0)),
+        ])
+        docker = self._make_docker(layer, self.model, self.doc)
+        docker.guides[0].manual_transform = (1.0, 0.0, 0.0, 1.0, 120.0, 60.0)
+
+        docker._set_active_guide(0)
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+        self.assertTrue(docker._transform_pending_apply)
+
+        # El sondeo ve identidad y no debe pisar el transform guardado.
+        docker.sync_manual_position()
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+
+        # El primer draw lo reaplica y limpia el pendiente.
+        docker.draw_lines_with_vectors(samples=16)
+        self.assertFalse(docker._transform_pending_apply)
+        for shape in layer.shapes():
+            self.assertAlmostEqual(shape.transformation().dx(), 120.0)
+            self.assertAlmostEqual(shape.transformation().dy(), 60.0)
+
+    def test_empty_layer_keeps_the_saved_transform(self):
+        docker = self._make_docker(_FakeLayer([]), self.model, self.doc)
+        docker.guides[0].manual_transform = (1.0, 0.0, 0.0, 1.0, -40.0, -20.0)
+
+        docker._set_active_guide(0)
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, -40.0, -20.0))
+
+        docker.draw_lines_with_vectors(samples=16)
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, -40.0, -20.0))
+        self.assertAlmostEqual(docker._last_pivot_position[0], 1620.0, places=3)
+        self.assertAlmostEqual(docker._last_pivot_position[1], 427.0, places=3)
+
+    def test_capture_ignores_a_marker_with_its_own_transform(self):
+        """El marcador del pivote no entra en el "transform mas comun"."""
+        common = _FakeTransform(1.0, 0.0, 0.0, 1.0, 30.0, 40.0)
+        marker = _FakeShape("loomis-pivot", (0.0, 0.0, 1.0, 1.0))
+        marker.setTransformation(_FakeTransform(1.0, 0.0, 0.0, 1.0, 999.0, 999.0))
+        first = _FakeShape("path-front", (0.0, 0.0, 10.0, 10.0))
+        first.setTransformation(common)
+        second = _FakeShape("path-back", (0.0, 0.0, 10.0, 10.0))
+        second.setTransformation(common)
+
+        captured = self.docker._capture_manual_transform(_FakeLayer([marker, first, second]))
+        self.assertEqual(captured, (1.0, 0.0, 0.0, 1.0, 30.0, 40.0))
+
+    def test_capture_returns_the_most_common_transform(self):
+        common = _FakeTransform(1.0, 0.0, 0.0, 1.0, 10.0, 20.0)
+        rare = _FakeTransform(1.0, 0.0, 0.0, 1.0, -10.0, -20.0)
+        shapes = []
+        for index in range(2):
+            shape = _FakeShape(f"path-{index}", (0.0, 0.0, 10.0, 10.0))
+            shape.setTransformation(common)
+            shapes.append(shape)
+        odd = _FakeShape("path-rare", (0.0, 0.0, 10.0, 10.0))
+        odd.setTransformation(rare)
+        shapes.append(odd)
+
+        captured = self.docker._capture_manual_transform(_FakeLayer(shapes))
+        self.assertEqual(captured, (1.0, 0.0, 0.0, 1.0, 10.0, 20.0))
+
+    def test_preset_with_pixel_position_uses_it(self):
+        """``positionUnit: "pixels"`` no se fuerza al centro."""
+        self._stub_preset_dependencies()
+        self.docker.apply_preset({
+            "model": "loomis",
+            "positionUnit": "pixels",
+            "positionX": 123.0,
+            "positionY": 456.0,
+        })
+        self.assertAlmostEqual(self.model.position_x, 123.0)
+        self.assertAlmostEqual(self.model.position_y, 456.0)
+
+    def test_preset_without_position_keeps_the_current_one(self):
+        """Un preset sin positionX/Y (guardado sin documento) no salta a 0,0."""
+        self._stub_preset_dependencies()
+        self.docker.apply_preset({"model": "loomis", "scale": 0.5})
+        self.assertAlmostEqual(self.model.position_x, 1660.0)
+        self.assertAlmostEqual(self.model.position_y, 447.0)
+        self.assertAlmostEqual(self.model.scale, 0.5)
+
+    def test_preset_with_invalid_stroke_color_is_dropped(self):
+        """Un color inyectado en un head JSON no llega al SVG."""
+        self._stub_preset_dependencies()
+        self.docker.apply_preset({
+            "model": "loomis",
+            "strokeColor": '#"><svg',
+        })
+        self.assertTrue(self.plugin._valid_stroke_color(self.model.stroke_color))
+        self.assertNotIn('"', self.model.stroke_color)
+
+    def test_loaded_state_with_invalid_stroke_color_is_sanitized(self):
+        other = self._make_docker(_FakeLayer([]), LoomisHead3D(), self.doc, guides=False)
+        other._load_guides(self.doc, {"guides": [{
+            "name": "Loomis Head 1",
+            "state": {"model": "loomis", "strokeColor": '#"><svg'},
+        }]})
+        self.assertEqual(len(other.guides), 1)
+        self.assertTrue(
+            self.plugin._valid_stroke_color(other.guides[0].model.stroke_color)
+        )
+
+    def test_reset_position_clears_the_transform_and_centers(self):
+        self.docker.draw_lines_with_vectors(samples=16)
+        self._move_by(120.0, 60.0)
+        self.docker.sync_manual_position()
+        self.docker.guides[0].manual_transform = self.docker._manual_transform
+
+        self.docker.reset_position()
+
+        self.assertEqual(self.docker._manual_transform, self.plugin.IDENTITY_TRANSFORM)
+        self.assertEqual(
+            self.docker.guides[0].manual_transform, self.plugin.IDENTITY_TRANSFORM
+        )
+        self.assertEqual((self.model.position_x, self.model.position_y), (1000.0, 500.0))
+        for shape in self.layer.shapes():
+            transform = shape.transformation()
+            self.assertEqual(
+                (transform.m11(), transform.m12(), transform.m21(),
+                 transform.m22(), transform.dx(), transform.dy()),
+                (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+            )
+        self.assertFalse(self.docker._transform_pending_apply)
+
+    def test_switch_model_keeps_position_scale_and_transform(self):
+        """El bug de 0.7.7: cambiar Loomis<->Asaro no mueve la cabeza."""
+        self.model.set_scale(0.63)
+        self.docker._manual_transform = (1.0, 0.0, 0.0, 1.0, 120.0, 60.0)
+        self.docker.guides[0].manual_transform = self.docker._manual_transform
+
+        asaro = self.docker._switch_model("asaro")
+        self.assertIsNotNone(asaro)
+        self.assertEqual(self.docker._current_model_id(), "asaro")
+        self.assertAlmostEqual(asaro.position_x, 1660.0)
+        self.assertAlmostEqual(asaro.position_y, 447.0)
+        self.assertAlmostEqual(asaro.scale, 0.63)
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+
+        loomis = self.docker._switch_model("loomis")
+        self.assertIsNotNone(loomis)
+        self.assertAlmostEqual(loomis.position_x, 1660.0)
+        self.assertAlmostEqual(loomis.position_y, 447.0)
+        self.assertAlmostEqual(loomis.scale, 0.63)
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+
+
+class EventPositionTests(unittest.TestCase):
+    """``preview.event_xy`` con los eventos de PyQt5 y PyQt6."""
+
+    def test_event_xy_qt5_and_qt6(self):
+        _plugin()
+        from loomis_head.preview import event_xy
+
+        class Qt6Event:
+            def position(self):
+                return _FakePoint(12.5, 34.5)
+
+        class Qt5Event:
+            def localPos(self):
+                return _FakePoint(-3.0, 7.25)
+
+        self.assertEqual(event_xy(Qt6Event()), (12.5, 34.5))
+        self.assertEqual(event_xy(Qt5Event()), (-3.0, 7.25))
 
 
 if __name__ == "__main__":

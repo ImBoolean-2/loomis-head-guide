@@ -41,6 +41,7 @@
   "status.applied": "Aplicado ao canvas; o painel continua disponível.",
   "error.title": "Erro",
   "error.no_canvas": "Não encontrei o canvas. Abra um documento primeiro.",
+  "error.save_failed": "Não foi possível salvar os presets.",
   "error.bad_head": "Esse arquivo não é uma cabeça Loomis válida.",
   "error.head_model": "Essa cabeça usa outro modelo: {model}",
   "check.zone_colors": "Cores por zona",

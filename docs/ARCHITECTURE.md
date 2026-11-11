@@ -21,6 +21,7 @@ needed by the docker and the preview widget; the geometry and its tests do not i
 | `trackball.py` | Legacy widget kept for reference (the preview replaces it) |
 | `test_generator.py` | Pure-Python Loomis unit tests (no Krita/Qt needed) |
 | `test_asaro.py` | Pure-Python Asaro unit tests and registry checks |
+| `test_ui_offscreen.py` | Docker acceptance test: real Qt + `krita` stub, no document; skips with `SkipTest` without PyQt5/PyQt6 |
 
 `models.py` is the only module that knows the implementations, and it imports them; neither
 `loomis_head_generator.py` nor `asaro.py` imports `models.py`, so there is no cycle. The
@@ -58,8 +59,9 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   the centre of the skull between ears and eyes, not the bust bbox centre (which includes
   neck and base). `position_x/y` is the **pivot position in the document**: `build_svg`
   subtracts `pivot_local` before rotating and projecting, so the pivot lands exactly on
-  `position_x/y` and rotating or switching model/type/sex does not move the head. The JSON
-  schema is unchanged; only the documented semantics changed.
+  `position_x/y` and rotating or switching model/type/sex does not move the head (with a
+  manual Move the X/Y the docker shows is `M·p + t`, see *Pivot marker and redraw*). The
+  JSON schema is unchanged; only the documented semantics changed.
 - **`show_neck`**: `AsaroHead.show_neck` (default `True`), `set_show_neck()`, `showNeck` in
   `to_dict`/`from_dict` and the **Show neck** checkbox in `AsaroPanel`
   (`asaro.show_neck`). With the neck off, the faces whose `neck` flag is set are filtered
@@ -68,13 +70,14 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   (opacity 0.18–0.28, no directional light) and round-trips as `shadePlanes`; `show_planes`,
   `show_edges` and `detail` (0..2 → level) still change the SVG. `test_asaro.py` locks the
   mesh sizes, the mouth band, the ear concha, the closed mesh, the pivot, `shade_planes`
-  and the round-trip; the suite is 128 tests (51 generator + 77 Asaro).
+  and the round-trip; the suite is 143 tests (66 generator + 77 Asaro), plus
+  `test_ui_offscreen.py` for the docker.
 - **License**: the code is **GPL-3.0-only**; the Asaro meshes are **CC BY 4.0**, not GPL —
   derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), design by **John Asaro**;
   "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed and not used. Attribution
-  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.8
+  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.9
   is a **local build**: no public ZIP or patch until it is validated in Krita; `release/`
-  keeps the 0.7.2 artifacts, the last public build (0.7.3 to 0.7.8 are local).
+  keeps the 0.7.2 artifacts, the last public build (0.7.3 to 0.7.9 are local).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
@@ -100,63 +103,66 @@ Settings rows are hidden.
 ## Pivot marker and redraw
 
 - After each SVG draw the docker adds an invisible `<circle>` named **`loomis-pivot`**
-  (1 px, no stroke, opacity 0) at `(position_x, position_y)` inside the layer. It does not
-  change the render or the visible bounds, and it is recreated at the pivot on every draw.
-- `sync_manual_position()` (120 ms timer) reads the marker's absolute position
-  (`absoluteTransformation().map(boundingBox().center())`), never `layer.bounds()`.
-- **Marker first (0.7.7)**: `sync_manual_position()` reads the `loomis-pivot` marker's
-  absolute centre delta first and applies it **once** to `position_x/y` (≥ 0.5 px threshold,
-  spinboxes updated, no redraw). Measured in Krita 5.3.4 on 0.7.6: a canvas Move moves the
-  content by +486/+588 px while `Node.position()` moves only +116/+161 px, and rotation
-  returns the layer near the pivot, so the layer is not the translation source.
-  `_layer_position()` (`Node.position()`) is only the **fallback** when the layer has no
-  marker (legacy document, layer without a drawing); with neither source nothing moves.
-  Because a manual canvas move is applied **1:1** there is no factor of 2 and no bounds
-  conversion.
-- **Semantics of X/Y (0.7.8)**: the docker X/Y is the **effective position** —
-  `model.position + manual_transform (dx, dy)` — the **Position** shown by Krita's
-  Transform tool. `_visible_position()` is the only reader;
-  `_refresh_visible_position()` writes it into the sliders/spinboxes without emitting
-  signals and `_set_visible_position()` moves the model pivot by the difference
-  (`new - visible`) so the Move is never touched: editing X/Y never jumps the head nor
-  discards the manual offset.
-- **Manual transform captured and reapplied (0.7.8)**: the 0.7.7 layer reset is **gone**.
-  A Move/Transform is stored by Krita in each shape's `transformation()` (a vector layer
-  keeps `Node.position()` at 0), so `_capture_manual_transform()` takes the most common
-  non-identity 6-float matrix from the layer's shapes (skipping the pivot marker, and
-  returning `None` for a layer with no drawing shapes so a saved transform is not
-  overwritten by an empty layer). `draw_lines_with_vectors()` captures it **before**
-  removing the shapes and `_apply_manual_transform()` re-applies it to **every** shape
-  returned by `addShapesFromSvg()`, marker included, so the marker's absolute centre is
-  already the effective position. `_set_shapes_identity()` only runs on the explicit
-  `reset_position`, which also clears `guide.manual_transform` and moves the layer to the
-  origin. `Guide.manual_transform` (default `IDENTITY_TRANSFORM`) holds the active guide's
-  offset; `_manual_transform` mirrors it in the docker.
-- **Persistence of the Move (0.7.8)**: each `guides.json` guide entry carries
+  (1 px, no stroke, opacity 0) at `(position_x, position_y)` in **SVG coordinates** inside
+  the layer; the manual matrix is then applied to the marker like to any other shape, so its
+  absolute centre is the effective X/Y. It does not change the render or the visible bounds,
+  and it is recreated at the pivot on every draw.
+- **Capture of the Move/Transform (0.7.8)**: Krita stores a canvas Move/Transform in each
+  shape's `Shape.transformation()`; a vector layer keeps `Node.position()` at 0 and
+  `Node.bounds()` drifts when the layer is rotated, so neither is the source anymore.
+  `_capture_manual_transform()` takes the **most common non-identity** 6-float matrix
+  (`m11, m12, m21, m22, dx, dy`) among the layer's shapes, skips the pivot marker, and
+  returns `None` for a layer with no drawing shape so an empty layer never overwrites a
+  saved transform. The capture runs in `sync_manual_position()` (120 ms timer) **before**
+  the draw and only stores the matrix: it never moves the model.
+- **Reapply (0.7.8)**: `draw_lines_with_vectors()` captures first, removes the old shapes,
+  builds the new SVG at `(position_x, position_y)` and `_apply_manual_transform()` applies
+  the matrix to **every** shape returned by `addShapesFromSvg()`, the marker included, so
+  the marker's absolute centre is already the effective position. The layer transform is
+  **no longer reset** before a redraw (that was the 0.7.7 bug); `_set_shapes_identity()`
+  only runs on the explicit `reset_position`, which also clears `guide.manual_transform`.
+- **Persistence**: each `guides.json` guide entry carries
   `"transform": [m11, m12, m21, m22, dx, dy]` (missing → identity for older documents),
-  restored into `guide.manual_transform` on load; presets and the head state carry
-  `layerTransform` in the same block as the model, so a preset load also re-applies it to
-  the current shapes. The field is opaque to the Grimoire of Color and to older versions.
+  restored into `guide.manual_transform`; presets and the head state carry
+  `layerTransform` in the same block as the model, so loading a preset re-applies the Move
+  to the current shapes. The field is opaque to the Grimoire of Color and to older
+  versions. If a reopened document has a saved transform but every shape is still at
+  identity, `_transform_pending_apply` (0.7.9, review finding C) keeps it: the 120 ms poll
+  does not overwrite it with identity and the first draw applies it.
+- **X/Y is the effective position (0.7.9)**: the docker shows `M·p + t` — the model pivot
+  passed through the **full** matrix, not `p + (dx, dy)`. `_visible_position()` is the only
+  reader; `_refresh_visible_position()` writes the value into the sliders/spinboxes without
+  emitting signals, and `_set_visible_position()` solves `p = M_lin⁻¹·(target − t)` (with a
+  `|det| < 1e-6` fallback to pure translation) before `set_position_x/y`, so editing X/Y
+  moves the model and never touches the manual Move. Ignoring the linear part was the
+  0.7.8 review finding A: with a 30° rotation the old formula was off by hundreds of pixels.
 - **Sync before the draw (0.7.5)**: `draw_lines_with_vectors()` calls `sync_manual_position()`
   **first**, before removing and recreating the shapes. The redraw builds the SVG at
   `(position_x, position_y)`, so without that call touching any docker control would snap a
-  manually moved head back to its old X/Y (the B→C regression). It covers the debounced
-  redraw, model switches and type/sex changes. After the draw both references (layer and
-  marker) are re-read; switching guides takes the new layer as baseline without a delta.
-- **`pivot.log` (0.7.6, manual fields in 0.7.8)**: every sync with a delta and every draw
-  append one line with a timestamp to `loomis_head/pivot.log` under
+  manually moved head back to its old X/Y. After the draw the marker and layer references
+  are re-read; switching guides takes the new layer as baseline without a delta.
+- **`pivot.log` (0.7.6, `manual`/`reapplied` in 0.7.8)**: every sync that changes the matrix
+  and every draw append one line with a timestamp to `loomis_head/pivot.log` under
   `QStandardPaths.AppDataLocation` (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log`
   in the flatpak): a `sync transform` line records `old=`/`new=` (the captured matrix) and
   the model `pos=`; each `draw` line records `pos=`, `visible=` (effective X/Y),
   `manual=<6 floats>`, `reapplied=<True|False>`, plus `layer=`, `marker=`, `last_layer=`
-  and `last_marker=`. It rotates to `pivot.log.1` past 200 KB and swallows any OS error:
-  diagnostics only, never a functional path.
+  and `last_marker=`. `init.log` and `setup.log` use the same rotation helper
+  (`_append_log`): each rotates to `<name>.1` past 200 KB and swallows any OS error.
+  Diagnostics only, never a functional path.
+- **History — 0.7.7, superseded by 0.7.8**: `sync_manual_position()` read the marker's
+  absolute centre delta and applied it **once** to `position_x/y`, with
+  `_layer_position()`/`Node.position()` as the fallback; a `_reset_layer_transform()` ran
+  before each draw. Both are gone: the sync no longer moves the model and
+  `_last_pivot_position` / `_last_layer_position` are log references only.
 - The canvas redraws after the **Input Delay** (`redrawDelay` in `settings.json`): a
-  `QSpinBox` **Delay** under View, 0–5000 ms in 50 ms steps, default `REDRAW_INTERVAL_MS`
-  (500 ms). The single-shot timer restarts on every slider/spin/rotation change and its
-  interval changes live when the spinbox changes; the docker preview runs live.
-  `valueChanged` only updates the preview and `sliderReleased` does **not** flush: the delay
-  always wins.
+  `QSpinBox` **Delay** under View, **50–5000 ms** in 50 ms steps, default
+  `REDRAW_INTERVAL_MS` (500 ms). The single-shot timer restarts on every slider/spin/rotation
+  change and its interval changes live when the spinbox changes; the docker preview runs
+  live. `valueChanged` only updates the preview and `sliderReleased` does **not** flush: the
+  delay always wins. The 50 ms floor stops a drag from rebuilding the layer on every tick
+  (dozens of undo entries per second), and `settings.json` is written on a 600 ms debounce
+  plus a flush in `hideEvent`.
 
 ## Head structure
 
@@ -196,16 +202,24 @@ loomis_head/
 ├── settings.json   language and redraw delay
 ├── presets.json    named presets and per-OC presets
 ├── guides.json     per-document guides: state + transform + models stash + centre + active index
-└── pivot.log       diagnostics: sync source/positions and draws (rotates to .1, 200 KB)
+├── pivot.log       diagnostics: sync source/positions and draws (rotates to .1, 200 KB)
+├── init.log        docker start/build failures and init:ok (rotates to .1, 200 KB)
+└── setup.log       extension setup: paths and registration (rotates to .1, 200 KB)
 ```
 
 `pivot.log` is written only on a sync with a delta and on each draw, so it appears after the
-first move/redraw. It holds no document data and can be deleted at any time.
+first move/redraw. All three logs are diagnostics, hold no document data and can be deleted
+at any time; each rotates to `<name>.1` past 200 KB.
 
 Positions in `guides.json` and presets are normalised (0–1 of the document size) so they
 survive canvas size changes. The model stores document pixels; the docker converts.
 `transform`/`layerTransform` (6 floats) are **not** normalised: they are a canvas-space
 matrix in document pixels, saved and restored verbatim.
+A shared head file declares which one it carries: `positionUnit: "normalized"` means
+`positionX/positionY` are 0–1 of the canvas, anything else (or missing, which is what
+`to_dict()` emits without a document) means document **pixels** and is used as-is. The two
+`heads/example-*.json` templates carry `"positionUnit": "normalized"` with `0.5/0.5`, the
+canvas centre.
 
 ## Optional Grimoire of Color
 
