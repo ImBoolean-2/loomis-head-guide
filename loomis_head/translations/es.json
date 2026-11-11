@@ -122,6 +122,7 @@
   "model.loomis": "Loomis",
   "model.asaro": "Asaro",
   "asaro.show_planes": "Mostrar planos",
+  "asaro.shade_planes": "Sombrear planos",
   "asaro.show_edges": "Mostrar aristas",
   "asaro.show_neck": "Mostrar cuello",
   "asaro.detail": "Detalle",

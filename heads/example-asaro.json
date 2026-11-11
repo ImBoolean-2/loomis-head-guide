@@ -26,6 +26,7 @@
     "showPlanes": true,
     "showEdges": true,
     "showNeck": true,
+    "shadePlanes": true,
     "detail": 1,
     "frontStroke": 10.0,
     "backStroke": 7.0,

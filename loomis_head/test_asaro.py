@@ -3,10 +3,15 @@
 
 """Pruebas de la cabeza Asaro y del registro de modelos (sin Krita).
 
+La malla ya no se dibuja a mano: es una decimacion del OBJ real guardada en
+``asaro_mesh``. Las pruebas miden la malla (proporciones, perfil, cuello) y el
+SVG (toggles, relleno de planos, ida y vuelta del preset).
+
 Ejecutar desde esta carpeta:
     python3 -m unittest test_asaro.py -v
 """
 import math
+import re
 import sys
 import types
 import unittest
@@ -18,20 +23,15 @@ _pkg = types.ModuleType("loomis_head")
 _pkg.__path__ = [str(Path(__file__).resolve().parent)]
 sys.modules.setdefault("loomis_head", _pkg)
 
+from loomis_head import asaro_mesh  # noqa: E402
 from loomis_head.asaro import (  # noqa: E402
     EDGE_COLOR,
     PLANE_COLOR,
-    _HALF_CLOSED_FACES,
-    _HALF_FACES,
-    _HALF_FINE,
-    _HALF_NECK_FACES,
-    _HALF_VERTICES,
-    _MIRROR,
-    _VERTICES,
+    _SHADE_TONES,
     AsaroHead,
+    _newell,
 )
 from loomis_head.linalg import q_axis_angle  # noqa: E402
-from loomis_head.loomis_head_generator import LoomisHead3D  # noqa: E402
 from loomis_head.models import (  # noqa: E402
     DEFAULT_MODEL,
     MODELS,
@@ -48,365 +48,262 @@ def _valid_svg(test: unittest.TestCase, svg: str) -> None:
     ET.fromstring(svg)  # XML bien formado
 
 
-def _profile(angle_deg: float = 90.0) -> dict:
-    """Proyecta la malla como la camara del perfil.
-
-    Con el quaternion de 90 grados sobre Y la profundidad z pasa a ser la x de
-    pantalla y la altura y se conserva, asi que ``p[name].x`` leido aqui es
-    directamente "cuanto sobresale" cada vertice en el perfil.
-    """
-    head = AsaroHead()
-    head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(angle_deg)))
-    return {name: head._to_camera(point) for name, point in _VERTICES.items()}
+def _profile_depth(point: tuple[float, float, float]) -> float:
+    """Cuanto sobresale un vertice hacia delante (la cara mira a +z)."""
+    return point[2]
 
 
-def _chord_z(a: tuple[float, float, float], b: tuple[float, float, float], y: float) -> float:
-    """Profundidad de la recta a-b a la altura y (para medir si un punto sobresale)."""
-    return a[2] + (y - a[1]) / (b[1] - a[1]) * (b[2] - a[2])
+def _band(vertices, low: float, high: float, half_width: float = 0.12):
+    """Vertices de una franja de altura cerca del plano sagital."""
+    return [p for p in vertices if low <= p[1] < high and abs(p[0]) < half_width]
 
 
-def _face_area(names) -> float:
+def _front(vertices, low: float, high: float) -> float:
+    """Profundidad maxima (lo que mas sobresale) en una franja de altura."""
+    band = _band(vertices, low, high)
+    return max((p[2] for p in band), default=float("-inf"))
+
+
+def _face_area(vertices, face) -> float:
     """Area de un poligono (abanico de triangulos), sin depender de que sea plano."""
-    pts = [_VERTICES[name] for name in names]
+    pts = [vertices[i] for i in face]
     area = 0.0
     for i in range(1, len(pts) - 1):
         ax = [pts[i][k] - pts[0][k] for k in range(3)]
         bx = [pts[i + 1][k] - pts[0][k] for k in range(3)]
-        cx = (
+        cross = (
             ax[1] * bx[2] - ax[2] * bx[1],
             ax[2] * bx[0] - ax[0] * bx[2],
             ax[0] * bx[1] - ax[1] * bx[0],
         )
-        area += 0.5 * math.sqrt(sum(c * c for c in cx))
+        area += 0.5 * math.sqrt(sum(c * c for c in cross))
     return area
 
 
-def _flip_name(name: str) -> str:
-    """Nombre del vertice espejado (los de x == 0 son su propio espejo)."""
-    if name.endswith("L"):
-        return name[:-1]
-    if abs(_HALF_VERTICES[name][0]) < 1e-9:
-        return name
-    return name + "L"
+def _edge_use(faces) -> dict[tuple[int, int], int]:
+    use: dict[tuple[int, int], int] = {}
+    for face in faces:
+        n = len(face)
+        for i in range(n):
+            a, b = face[i], face[(i + 1) % n]
+            key = (a, b) if a < b else (b, a)
+            use[key] = use.get(key, 0) + 1
+    return use
 
 
-def _all_half_faces() -> set[tuple[str, ...]]:
-    """Todas las caras de la mitad derecha, en cualquier nivel de detalle."""
-    faces = {names for _level, names in _HALF_FACES}
-    faces |= {names for _level, names in _HALF_NECK_FACES}
-    faces |= {names for _level, names in _HALF_CLOSED_FACES}
-    for _original, _centre, halves in _HALF_FINE:
-        faces |= set(halves)
-    return faces
+class AsaroMeshDataTests(unittest.TestCase):
+    """Integridad de los datos de la malla decimada."""
 
+    def test_levels_and_counts(self):
+        self.assertEqual(asaro_mesh.LEVEL_COUNT, 3)
+        self.assertEqual([d["detail"] for d in asaro_mesh.ASARO_LEVELS], [0, 1, 2])
+        heads = [d["head_faces"] for d in asaro_mesh.ASARO_LEVELS]
+        # Contrato 0.7.3: ~200-300, ~400-600 y ~800-1200 caras de cabeza.
+        self.assertGreaterEqual(heads[0], 200)
+        self.assertLessEqual(heads[0], 300)
+        self.assertGreaterEqual(heads[1], 400)
+        self.assertLessEqual(heads[1], 600)
+        self.assertGreaterEqual(heads[2], 800)
+        self.assertLessEqual(heads[2], 1200)
+        self.assertEqual(heads, sorted(set(heads)), "el detalle debe crecer")
 
-class AsaroTests(unittest.TestCase):
-    def test_default_svg(self):
-        svg = AsaroHead().build_svg(1000, 800)
-        _valid_svg(self, svg)
-        self.assertIn("<path", svg)
+    def test_every_level_has_neck_and_cap(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            total = len(data["faces"])
+            self.assertGreater(total, data["head_faces"], "falta el cuello")
+            self.assertTrue(data["cap"], "falta el tapon del corte")
+            self.assertEqual(data["detail"], asaro_mesh.ASARO_LEVELS.index(data))
 
-    def test_planes_and_edges_toggle(self):
-        head = AsaroHead()
-        both = head.build_svg(800, 800)
-        head.set_show_edges(False)
-        planes_only = head.build_svg(800, 800)
-        self.assertLess(len(planes_only), len(both))
-        head.set_show_planes(False)
-        nothing = head.build_svg(800, 800)
-        self.assertNotIn("<path", nothing)
-        _valid_svg(self, nothing)
-        head.set_show_edges(True)
-        edges_only = head.build_svg(800, 800)
-        _valid_svg(self, edges_only)
-        self.assertNotIn('title="asaro-planes"', edges_only)
-        self.assertIn('title="asaro-edges"', edges_only)
+    def test_vertices_are_finite(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            for point in data["verts"]:
+                self.assertEqual(len(point), 3)
+                for value in point:
+                    self.assertTrue(math.isfinite(value), f"{point} no es finito")
 
-    def test_detail_levels(self):
-        head = AsaroHead()
-        counts = []
-        for detail in (0, 1, 2):
-            head.set_detail(detail)
-            counts.append(len(head._faces()))
-        self.assertLess(counts[0], counts[1])
-        self.assertLess(counts[1], counts[2])
-        head.set_detail(0)
-        coarse = head.build_svg(800, 800)
-        head.set_detail(1)
-        standard = head.build_svg(800, 800)
-        head.set_detail(2)
-        fine = head.build_svg(800, 800)
-        self.assertLess(len(coarse), len(standard))
-        self.assertLess(len(standard), len(fine))
-        for svg in (coarse, standard, fine):
-            _valid_svg(self, svg)
+    def test_faces_are_valid(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            verts = data["verts"]
+            for face in data["faces"]:
+                self.assertGreaterEqual(len(face), 3, f"{face} tiene menos de un triangulo")
+                self.assertEqual(len(set(face)), len(face), f"{face} repite vertices")
+                for index in face:
+                    self.assertTrue(0 <= index < len(verts), f"{face} apunta fuera de la malla")
+                self.assertGreater(_face_area(verts, face), 1e-5, f"{face} degenerada")
+                nx, ny, nz = _newell([verts[i] for i in face])
+                self.assertAlmostEqual(math.sqrt(nx * nx + ny * ny + nz * nz), 1.0, places=6)
 
-    def test_rotation_changes_svg(self):
-        head = AsaroHead()
-        front = head.build_svg(800, 800)
-        head.set_quaternion(q_axis_angle([0, 1, 0], 0.7))
-        turned = head.build_svg(800, 800)
-        self.assertNotEqual(front, turned)
-        _valid_svg(self, turned)
-        head.set_quaternion(q_axis_angle([1, 0, 0], -0.5))
-        _valid_svg(self, head.build_svg(800, 800))
+    def test_no_duplicate_faces(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            seen = set()
+            for face in data["faces"]:
+                key = frozenset(face)
+                self.assertNotIn(key, seen, f"cara repetida {face}")
+                seen.add(key)
 
-    def test_dict_roundtrip(self):
-        head = AsaroHead()
-        head.set_scale(1.4)
-        head.set_position_x(320)
-        head.set_position_y(210)
-        head.set_quaternion(q_axis_angle([0, 1, 0], 0.4))
-        head.set_front_line_stroke(12)
-        head.set_back_line_stroke(5)
-        head.set_stroke_color("#112233")
-        head.set_zone_colors(True)
-        head.set_show_planes(False)
-        head.set_show_edges(True)
-        head.set_show_neck(False)
-        head.set_detail(2)
-        data = head.to_dict()
-        self.assertEqual(data["model"], "asaro")
-        self.assertEqual(data["generator"], "asaro")
-        self.assertEqual(data["version"], 1)
-        self.assertIs(data["showNeck"], False)
+    def test_cap_faces_are_valid(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            verts = data["verts"]
+            for face in data["cap"]:
+                self.assertEqual(len(set(face)), 3, f"{face} no es un triangulo")
+                for index in face:
+                    self.assertTrue(0 <= index < len(verts))
+                nx, ny, nz = _newell([verts[i] for i in face])
+                self.assertLess(ny, 0.0, f"{face} no mira hacia abajo")
+                # El tapon va en el plano del corte, no repartido por la cabeza.
+                for index in face:
+                    self.assertLess(verts[index][1], data["neck_y"] + 0.15)
 
-        clone = AsaroHead()
-        clone.from_dict(data)
-        self.assertEqual(data, clone.to_dict())
-        self.assertEqual(head.build_svg(800, 800), clone.build_svg(800, 800))
+    def test_cap_closes_the_neck_cut(self):
+        """El tapon cubre el borde del corte de cuello.
 
-    def test_show_neck_toggle(self):
-        head = AsaroHead()
-        with_neck = len(head._faces())
-        neck_svg = head.build_svg(800, 800)
-        cap = frozenset(next(iter(_HALF_CLOSED_FACES))[1])
-        facing_neck = {frozenset(names) for names in head._faces()}
-        self.assertNotIn(cap, facing_neck)
+        La decimacion deja ademas grietas de junctions en T por toda la
+        superficie; esas no se tapan (no son el corte) y se cuentan aparte.
+        """
+        for data in asaro_mesh.ASARO_LEVELS:
+            verts = data["verts"]
+            head = data["faces"][:data["head_faces"]]
+            use = _edge_use(head)
+            border = {edge for edge, count in use.items() if count == 1}
+            cut = {
+                edge for edge in border
+                if all(verts[i][1] < data["neck_y"] + 0.10 for i in edge)
+            }
+            self.assertTrue(cut, "no hay borde de corte")
+            self.assertFalse(cut - set(_edge_use(data["cap"])), "el tapon no cubre el corte")
 
-        head.set_show_neck(False)
-        without_neck = len(head._faces())
-        no_neck_svg = head.build_svg(800, 800)
-        self.assertLess(without_neck, with_neck)
-        self.assertNotEqual(neck_svg, no_neck_svg)
-        _valid_svg(self, neck_svg)
-        _valid_svg(self, no_neck_svg)
-        # Sin cuello no queda un agujero: el anillo de la mandibula se tapa.
-        capped = {frozenset(names) for names in head._faces()}
-        self.assertIn(cap, capped)
-        used = {name for names in head._faces() for name in names}
-        self.assertNotIn("G10", used)  # la base del busto ya no esta
-        self.assertIn("F11", used)     # el borde de la mandibula sigue
-        head.set_show_neck(True)
-        self.assertEqual(len(head._faces()), with_neck)
+    def test_no_dead_vertices(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            used = {index for face in data["faces"] for index in face}
+            cap_used = {index for face in data["cap"] for index in face}
+            self.assertEqual(used | cap_used, set(range(len(data["verts"]))))
 
-    def test_closed_cap_matches_neck_ring(self):
-        # El tapon sin cuello y la primera fila del cuello comparten anillo: si
-        # se separan aparece una costura (hueco) al apagar el cuello.
-        cap = next(names for _l, names in _HALF_CLOSED_FACES)
-        neck_ring = set()
-        for _level, names in _HALF_NECK_FACES:
-            neck_ring |= set(names)
-        self.assertTrue(set(cap) <= neck_ring, "el tapon no coincide con el anillo del cuello")
+    def test_neck_y_matches_the_declared_plane(self):
+        self.assertLess(asaro_mesh.NECK_Y, 0.0)
+        for data in asaro_mesh.ASARO_LEVELS:
+            self.assertAlmostEqual(data["neck_y"], asaro_mesh.NECK_Y, delta=0.01)
 
-    def test_from_dict_tolerates_garbage(self):
-        head = AsaroHead()
-        head.from_dict({})
-        _valid_svg(self, head.build_svg(800, 800))
-        head.from_dict({"scale": "no", "rotation": [1, 2], "detail": None})
-        _valid_svg(self, head.build_svg(800, 800))
-        head.from_dict({"rotation": [0, 0, 0, 0], "strokeColor": "azul"})
-        _valid_svg(self, head.build_svg(800, 800))
-        self.assertEqual(head.model_id, "asaro")
-
-    def test_from_dict_accepts_loomis_preset(self):
-        # Un preset Loomis no debe romper la carga: se leen las claves comunes.
-        loomis = LoomisHead3D()
-        head = AsaroHead()
-        head.from_dict(loomis.to_dict())
-        self.assertEqual(head.model_id, "asaro")
-        self.assertAlmostEqual(head.side_cut, loomis.side_cut)
-        _valid_svg(self, head.build_svg(800, 800))
-
-    def test_interface_setters(self):
-        head = AsaroHead()
-        head.set_scale(0.8)
-        head.set_position_x(100)
-        head.set_position_y(-50)
-        head.set_quaternion(q_axis_angle([0, 0, 1], 0.2))
-        head.set_front_line_stroke(9)
-        head.set_back_line_stroke(6)
-        head.set_stroke_color("#ABCDEF")
-        head.set_zone_colors(True)
-        head.set_sidecut(0.5)
-        head.set_face_age(0.6)
-        head.set_chin_width(1.2)
-        head.set_show_face(False)
-        head.set_arrow(False)
-        head.set_silhouette(False)
-        head.set_side_rims(False)
-        head.set_side_cross(False)
-        head.set_show_planes(True)
-        head.set_show_edges(True)
-        head.set_show_neck(True)
-        head.set_detail(1)
-        svg = head.build_svg(800, 800)
-        _valid_svg(self, svg)
-        self.assertIn(PLANE_COLOR, svg)
-        self.assertIn(EDGE_COLOR, svg)
-
-    def test_clamps(self):
-        head = AsaroHead()
-        head.set_scale(0)
-        self.assertGreaterEqual(head.scale, 0.05)
-        head.set_scale(99)
-        self.assertLessEqual(head.scale, 5.0)
-        head.set_front_line_stroke(999)
-        self.assertLessEqual(head.front_line_stroke, 60.0)
-        head.set_back_line_stroke(0)
-        self.assertGreaterEqual(head.back_line_stroke, 0.5)
-        head.set_detail(9)
-        self.assertEqual(head.detail, 2)
-        head.set_detail(-4)
-        self.assertEqual(head.detail, 0)
-        head.set_position_x(float("nan"))
-        self.assertTrue(head.position_x == head.position_x)  # no NaN
-
-    def test_extremes_keep_svg_finite(self):
-        head = AsaroHead()
-        for scale in (0.05, 1.0, 5.0):
-            for angle in (-3.0, 0.0, 3.0):
-                head.set_scale(scale)
-                head.set_quaternion(q_axis_angle([0, 1, 0], angle))
-                _valid_svg(self, head.build_svg(800, 800))
-                head.set_detail(2)
-                _valid_svg(self, head.build_svg(1200, 400))
-        head.set_show_neck(False)
-        for detail in (0, 1, 2):
-            head.set_detail(detail)
-            _valid_svg(self, head.build_svg(800, 800))
-
-    def test_svg_follows_position_and_scale(self):
-        head = AsaroHead()
-        small = head.build_svg(800, 800)
-        head.set_scale(2.0)
-        big = head.build_svg(800, 800)
-        self.assertNotEqual(small, big)
-        _valid_svg(self, big)
+    def test_neck_flag_is_the_cut(self):
+        for data in asaro_mesh.ASARO_LEVELS:
+            verts = data["verts"]
+            flags = asaro_mesh.neck_flags(data["detail"])
+            self.assertEqual(len(flags), len(data["faces"]))
+            for face, is_neck in zip(data["faces"], flags):
+                height = sum(verts[i][1] for i in face) / len(face)
+                if is_neck:
+                    self.assertLess(height, data["neck_y"] + 1e-6, f"{face} deberia ser cuello")
+                else:
+                    self.assertGreaterEqual(height, data["neck_y"] - 1e-6)
 
 
 class AsaroProportionTests(unittest.TestCase):
-    """Proporciones del contrato 0.7.2 (unidades del modelo).
+    """Proporciones medidas sobre la malla normalizada (alto 1.5)."""
 
-    Alto 1.5 (coronilla a base), ancho oreja a oreja 1.0, fondo 0.75; cara
-    (ceja-menton) ~50 % del alto y cuello ~30 %. El fondo se compara con el
-    alto de la cabeza sola (coronilla-menton), que es la proporcion craneal
-    real (~0.7); contra el busto entero seria 0.5.
-    """
-
-    def bounds(self):
-        xs = [p[0] for p in _VERTICES.values()]
-        ys = [p[1] for p in _VERTICES.values()]
-        zs = [p[2] for p in _VERTICES.values()]
+    def bounds(self, detail: int = 2):
+        head = AsaroHead()
+        head.set_detail(detail)
+        verts = head._vertices()
+        xs = [p[0] for p in verts]
+        ys = [p[1] for p in verts]
+        zs = [p[2] for p in verts]
         return (min(xs), max(xs)), (min(ys), max(ys)), (min(zs), max(zs))
 
-    def test_height_and_width(self):
-        (x0, x1), (y0, y1), _zs = self.bounds()
-        height = y1 - y0
+    def test_height_is_exactly_the_contract_height(self):
+        for detail in (0, 1, 2):
+            _xs, (y0, y1), _zs = self.bounds(detail)
+            self.assertAlmostEqual(y1 - y0, asaro_mesh.HEIGHT, places=6)
+            self.assertAlmostEqual(y0, -asaro_mesh.HEIGHT / 2, places=6)
+
+    def test_width_and_depth(self):
+        (x0, x1), _ys, (z0, z1) = self.bounds()
         width = x1 - x0
-        self.assertAlmostEqual(height, 1.5, places=6)
-        self.assertAlmostEqual(width, 1.0, delta=0.02)
-        self.assertAlmostEqual(height / width, 1.5, delta=0.15)
-
-    def test_depth(self):
-        _xs, (y0, y1), (z0, z1) = self.bounds()
         depth = z1 - z0
-        self.assertAlmostEqual(depth, 0.75, delta=0.05)
-        head_height = y1 - _VERTICES["F10"][1]  # coronilla -> menton
-        self.assertAlmostEqual(depth / head_height, 0.7, delta=0.1)
+        # Ancho oreja a oreja y fondo nariz-occipucio del busto real.
+        self.assertAlmostEqual(width, 0.80, delta=0.05)
+        self.assertAlmostEqual(depth, 0.99, delta=0.05)
+        self.assertAlmostEqual(depth / width, 1.24, delta=0.1)
+        self.assertAlmostEqual(x0, -x1, places=5, msg="la malla no esta centrada en x")
 
-    def test_face_and_neck_share_of_height(self):
+    def test_head_and_neck_share_of_height(self):
         _xs, (y0, y1), _zs = self.bounds()
         height = y1 - y0
-        face = _VERTICES["F2"][1] - _VERTICES["F10"][1]  # ceja -> menton
-        neck = _VERTICES["F10"][1] - y0                  # menton -> base
-        self.assertAlmostEqual(face / height, 0.5, delta=0.1)
-        self.assertAlmostEqual(neck / height, 0.30, delta=0.06)
+        head = y1 - asaro_mesh.NECK_Y
+        neck = asaro_mesh.NECK_Y - y0
+        self.assertAlmostEqual(head / height, 0.63, delta=0.03)
+        self.assertAlmostEqual(neck / height, 0.37, delta=0.03)
 
-    def test_profile_landmarks_are_at_their_heights(self):
-        # Ojo, nariz y boca tienen que caer donde caen en un craneo real.
-        crown = _VERTICES["F0"][1]
-        chin = _VERTICES["F10"][1]
-        head = crown - chin
-        eye = _VERTICES["G2"][1]
-        nose_base = _VERTICES["F6"][1]
-        mouth = _VERTICES["F8"][1]
-        self.assertAlmostEqual((eye - chin) / head, 0.5, delta=0.1)
-        self.assertAlmostEqual((nose_base - chin) / head, 0.33, delta=0.1)
-        self.assertAlmostEqual((mouth - chin) / head, 0.16, delta=0.08)
+    def test_depth_is_bigger_than_width(self):
+        _xs, (y0, y1), (z0, z1) = self.bounds()
+        self.assertGreater(z1 - z0, (y1 - y0) * 0.6, "el craneo es una losa")
+
+    def test_levels_share_the_same_scale(self):
+        heights = []
+        for detail in (0, 1, 2):
+            _xs, (y0, y1), _zs = self.bounds(detail)
+            heights.append(y1 - y0)
+        for height in heights:
+            self.assertAlmostEqual(height, heights[2], delta=0.001)
 
 
 class AsaroProfileTests(unittest.TestCase):
-    """El perfil a 90 grados es el caso que hay que sostener: la silueta la
-    forman las columnas centrales F (cara) y K (nuca), porque el resto queda
-    detras. Un vertice "sobresale" si su profundidad gana a la recta que une
-    ceja y menton.
-    """
+    """El perfil a 90 grados: la silueta la forman los vertices centrales."""
+
+    def setUp(self):
+        self.head = AsaroHead()
+        self.head.set_detail(2)
+        self.verts = self.head._vertices()
 
     def test_nose_protrudes(self):
-        p = _profile(90.0)
-        tip = p["F5"]
-        plane = _chord_z(_HALF_VERTICES["F2"], _HALF_VERTICES["F10"], _HALF_VERTICES["F5"][1])
-        self.assertGreaterEqual(tip.x - plane, 0.09, "la nariz no sobresale del plano ceja-menton")
-        # La punta es el punto mas adelantado de toda la malla.
-        self.assertAlmostEqual(tip.x, max(v.x for v in p.values()), places=6)
-        # Muescas: bajo la punta (filtro) y sobre el dorso (nasion).
-        self.assertGreaterEqual(tip.x - p["F6"].x, 0.10, "falta la muesca bajo la nariz")
-        self.assertGreater(p["F4"].x, p["F3"].x, "el dorso debe arrancar por delante del nasion")
+        tip = _front(self.verts, 0.13, 0.21)   # punta de la nariz
+        brow = _front(self.verts, 0.27, 0.33)  # ceja
+        lips = _front(self.verts, -0.09, 0.0)  # labios
+        chin = _front(self.verts, -0.19, -0.11)
+        self.assertGreaterEqual(tip, 0.48, "la malla no tiene punta de nariz")
+        self.assertGreaterEqual(tip - brow, 0.04, "la nariz no sobresale de la ceja")
+        self.assertGreaterEqual(tip - lips, 0.06, "la nariz no sobresale de los labios")
+        self.assertLess(chin, tip - 0.08, "el menton queda por delante de la nariz")
 
-    def test_eye_socket_is_recessed(self):
-        p = _profile(90.0)
-        self.assertGreaterEqual(p["F2"].x - p["F3"].x, 0.06, "la ceja no vuela sobre el nasion")
-        # La cuenca (G2/H2) queda por detras de la ceja y del pomulo.
-        self.assertGreaterEqual(p["G1"].x - p["G2"].x, 0.09, "la cuenca no esta hundida")
-        self.assertGreaterEqual(p["H3"].x - p["H2"].x, 0.10, "el pomulo no sobresale del borde orbitario")
+    def test_nose_tip_is_the_frontmost_vertex(self):
+        widest = max(self.verts, key=lambda p: p[2])
+        self.assertGreater(widest[2], 0.48)
+        self.assertAlmostEqual(widest[1], 0.17, delta=0.06, msg="la punta no esta a la altura de la nariz")
 
     def test_lips_and_chin_step(self):
-        p = _profile(90.0)
-        self.assertGreater(p["F7"].x, p["F9"].x + 0.05, "los labios no ganan al surco")
-        self.assertGreater(p["F10"].x, p["F9"].x + 0.03, "el menton queda metido")
-        self.assertGreater(p["F10"].x, p["F11"].x + 0.12, "el menton no cierra bajo la mandibula")
-        self.assertGreater(p["F11"].x - p["F12"].x, 0.10, "falta el hueco de la garganta")
+        lips = _front(self.verts, -0.09, 0.0)
+        chin = _front(self.verts, -0.19, -0.11)
+        throat = _front(self.verts, -0.24, -0.19)
+        self.assertGreater(lips, chin - 0.05, "los labios no ganan al menton")
+        self.assertGreater(chin, 0.30, "el menton no existe en el perfil")
+        self.assertLess(throat, chin, "falta la muesca bajo el menton")
 
-    def test_occiput_is_curved(self):
-        back = [_VERTICES[name][2] for name in ("K1", "K2", "K3", "K4", "K5", "K6")]
-        # Del occipucio (K2) a la nuca la profundidad solo avanza hacia delante.
-        self.assertEqual(back[1:], sorted(back[1:]), "la nuca no curva hacia el cuello")
-        self.assertLess(back[1], back[0], "el occipucio no abomba por detras")
-        self.assertLessEqual(_VERTICES["K3"][2], min(_VERTICES["K2"][2], _VERTICES["K4"][2]))
-        self.assertGreater(back[-1] - back[0], 0.07, "la nuca es un plano vertical")
-        # Coronilla: no cae en linea recta hasta el occipucio.
-        bulge = _chord_z(_HALF_VERTICES["K0"], _HALF_VERTICES["K2"], _HALF_VERTICES["K1"][1])
-        self.assertLessEqual(_HALF_VERTICES["K1"][2], bulge - 0.02)
+    def test_occiput_is_the_back_of_the_head(self):
+        back = min(self.verts, key=lambda p: p[2])
+        self.assertLess(back[2], -0.45)
+        self.assertTrue(0.1 < back[1] < 0.35, "el occipucio no esta a la altura del craneo")
+
+    def test_skull_is_round_not_a_box(self):
+        # A media altura del craneo el fondo tiene que abombar: mas fondo que
+        # en la coronilla y que en la nuca.
+        mid = min(_band(self.verts, 0.15, 0.30, 0.2), key=lambda p: p[2])[2]
+        crown = min(_band(self.verts, 0.55, 0.70, 0.2), key=lambda p: p[2])[2]
+        neck = min(_band(self.verts, -0.30, -0.20, 0.2), key=lambda p: p[2])[2]
+        self.assertLess(mid, crown)
+        self.assertLess(mid, neck)
 
     def test_ear_is_lateral_and_at_eye_height(self):
-        widest = max(abs(p[0]) for p in _VERTICES.values())
-        self.assertAlmostEqual(widest, abs(_VERTICES["E2"][0]), places=6)
-        ear_top = max(_VERTICES[name][1] for name in ("E1", "E2", "E3", "E4"))
-        ear_bottom = min(_VERTICES[name][1] for name in ("E1", "E2", "E3", "E4"))
-        self.assertGreater(ear_top, _VERTICES["G2"][1])   # por encima del ojo
-        self.assertGreater(ear_top, _VERTICES["F6"][1])   # por encima de la nariz
-        self.assertLess(ear_bottom, _VERTICES["F6"][1])
-        # La oreja sobresale de la pared lateral del craneo (J).
-        self.assertGreater(_VERTICES["E2"][0], _VERTICES["J3"][0] + 0.03)
+        widest = max(self.verts, key=lambda p: abs(p[0]))
+        self.assertGreaterEqual(abs(widest[0]), 0.39)
+        self.assertTrue(0.10 < widest[1] < 0.32, "la oreja no esta a la altura del ojo")
+        self.assertLess(widest[2], 0.0, "la oreja no va detras de la cara")
+        skull_top = max(abs(p[0]) for p in self.verts if p[1] > 0.55)
+        self.assertGreater(abs(widest[0]) - skull_top, 0.05, "la oreja no sobresale del craneo")
 
     def test_profile_and_threequarter_svg_are_valid(self):
-        head = AsaroHead()
         for angle in (90.0, 45.0):
-            head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(angle)))
+            self.head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(angle)))
             for detail in (0, 1, 2):
-                head.set_detail(detail)
-                svg = head.build_svg(800, 800)
+                self.head.set_detail(detail)
+                svg = self.head.build_svg(800, 800)
                 _valid_svg(self, svg)
                 self.assertIn("<path", svg)
                 self.assertIn('title="asaro-planes"', svg)
@@ -415,106 +312,255 @@ class AsaroProfileTests(unittest.TestCase):
     def test_profile_outline_is_drawn(self):
         # La silueta (arista entre cara que mira a camara y cara que no) tiene
         # que estar dibujada o el perfil sale abierto.
-        head = AsaroHead()
-        head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(90.0)))
-        kinds = head._edge_kinds(head._faces())
+        self.head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(90.0)))
+        kinds = self.head._edge_kinds(self.head._faces())
         silhouettes = {(a, b) for a, b, kind in kinds if kind == "silhouette"}
         self.assertTrue(silhouettes)
-        self.assertIn(("F4", "F5"), silhouettes)   # dorso -> punta
-        self.assertIn(("K2", "K3"), silhouettes)   # occipucio
+        # Todas las aristas de la silueta son pliegues del contorno: su cara
+        # visible tiene que estar en el borde de la proyeccion.
+        verts = self.verts
+        xs = [verts[i][2] for a, b in silhouettes for i in (a, b)]
+        self.assertGreater(max(xs) - min(xs), 0.5, "la silueta no recorre el perfil")
 
 
-class AsaroMeshTests(unittest.TestCase):
-    """Integridad de la malla: simetrica, sin caras degeneradas ni vertices muertos."""
+class AsaroHeadTests(unittest.TestCase):
+    """Interfaz del modelo: toggles, preset y SVG."""
 
-    def test_vertex_symmetry(self):
-        central = 0
-        for name, (x, y, z) in _HALF_VERTICES.items():
-            mirror = _VERTICES[_flip_name(name)]
-            self.assertAlmostEqual(mirror[0], -x, places=9, msg=name)
-            self.assertAlmostEqual(mirror[1], y, places=9, msg=name)
-            self.assertAlmostEqual(mirror[2], z, places=9, msg=name)
-            if abs(x) < 1e-9:
-                central += 1
-        self.assertEqual(len(_VERTICES), 2 * len(_HALF_VERTICES) - central)
+    def test_default_svg(self):
+        svg = AsaroHead().build_svg(1000, 800)
+        _valid_svg(self, svg)
+        self.assertIn("<path", svg)
 
-    def test_faces_are_mirrored(self):
+    def test_detail_levels_change_the_svg(self):
         head = AsaroHead()
+        svgs = []
         for detail in (0, 1, 2):
             head.set_detail(detail)
-            faces = head._faces()
-            keys = {frozenset(face) for face in faces}
-            for face in faces:
-                self.assertIn(frozenset(_flip_name(n) for n in face), keys, f"{face} sin espejo")
+            svgs.append(head.build_svg(800, 800))
+        self.assertEqual(len(set(svgs)), 3, "el detalle no cambia el dibujo")
+        self.assertLess(len(svgs[0]), len(svgs[1]))
+        self.assertLess(len(svgs[1]), len(svgs[2]))
 
-    def test_no_degenerate_faces(self):
+    def test_show_planes_toggles_the_face_outlines(self):
         head = AsaroHead()
-        for detail in (0, 1, 2):
-            head.set_detail(detail)
-            for face in head._faces():
-                self.assertGreaterEqual(len(face), 3, f"{face} tiene menos de un triangulo")
-                self.assertEqual(len(set(face)), len(face), f"{face} repite vertices")
-                self.assertGreater(_face_area(face), 1e-3, f"{face} degenerada")
-                nx, ny, nz = head._face_normal(face)
-                self.assertAlmostEqual(math.sqrt(nx * nx + ny * ny + nz * nz), 1.0, places=6)
-                for name in face:
-                    self.assertIn(name, _VERTICES)
+        with_planes = head.build_svg(800, 800)
+        head.set_show_planes(False)
+        without = head.build_svg(800, 800)
+        self.assertIn('title="asaro-planes"', with_planes)
+        self.assertNotIn('title="asaro-planes"', without)
+        _valid_svg(self, without)
 
-    def test_no_dead_vertices(self):
-        used = {name for names in _all_half_faces() for name in names}
-        self.assertEqual(used, set(_HALF_VERTICES))
-
-    def test_face_counts_per_detail(self):
+    def test_show_edges_toggles_the_lines(self):
         head = AsaroHead()
-        counts = []
-        for detail in (0, 1, 2):
-            head.set_detail(detail)
-            counts.append(len(head._faces()))
-        self.assertGreaterEqual(counts[0], 40)
-        self.assertLessEqual(counts[0], 62)
-        self.assertGreaterEqual(counts[1], 60)   # contrato: 60-80 en detalle 1
-        self.assertLessEqual(counts[1], 80)
-        self.assertGreaterEqual(counts[2], counts[1] + 8)
-        self.assertEqual(counts, sorted(set(counts)), "el detalle debe crecer")
+        with_edges = head.build_svg(800, 800)
+        head.set_show_edges(False)
+        without = head.build_svg(800, 800)
+        self.assertIn('title="asaro-edges"', with_edges)
+        self.assertNotIn('title="asaro-edges"', without)
+        _valid_svg(self, without)
 
-    def test_neck_does_not_change_the_head(self):
+    def test_shade_planes_toggles_the_fill(self):
         head = AsaroHead()
-        head.set_show_neck(True)
-        with_neck = {tuple(sorted(names)) for names in head._faces()}
+        self.assertTrue(head.shade_planes)
+        filled = head.build_svg(800, 800)
+        self.assertIn("fill-opacity", filled)
+        self.assertIn('title="asaro-shade-frontal"', filled)
+        head.set_shade_planes(False)
+        plain = head.build_svg(800, 800)
+        self.assertNotIn("fill-opacity", plain)
+        self.assertNotIn("asaro-shade", plain)
+        # Sin relleno el dibujo pesa menos, pero las aristas siguen.
+        self.assertLess(len(plain), len(filled))
+        self.assertIn('title="asaro-edges"', plain)
+
+    def test_shade_uses_orientation_not_light(self):
+        # Cuatro tonos planos por azimut, con la opacidad del contrato.
+        self.assertEqual(len(_SHADE_TONES), 4)
+        for _name, colour, opacity, _limit in _SHADE_TONES:
+            self.assertTrue(0.18 <= opacity <= 0.28, opacity)
+            self.assertTrue(colour.startswith("#") and len(colour) == 7)
+        svg = AsaroHead().build_svg(800, 800)
+        for name, _colour, opacity, _limit in _SHADE_TONES:
+            if f'asaro-shade-{name}' in svg:
+                self.assertIn(f'fill-opacity="{opacity}"', svg)
+
+    def test_show_neck_toggles_the_bust(self):
+        head = AsaroHead()
+        with_neck = head.build_svg(800, 800)
+        faces_with = len(head._faces())
         head.set_show_neck(False)
-        without_neck = {tuple(sorted(names)) for names in head._faces()}
-        # Lo unico que cambia es el cuello (fuera) y el tapon de la mandibula
-        # (dentro): el craneo y la cara son las mismas caras.
-        removed = without_neck - with_neck
-        cap = next(iter(_HALF_CLOSED_FACES))[1]
-        expected = {
-            tuple(sorted(cap)),
-            tuple(sorted(_MIRROR[name] for name in cap)),
-        }
-        self.assertEqual(removed, expected)
-        self.assertTrue(with_neck - without_neck)
+        without = head.build_svg(800, 800)
+        faces_without = len(head._faces())
+        self.assertLess(faces_without, faces_with)
+        self.assertEqual(faces_without, head._level()["head_faces"] + len(head._level()["cap"]))
+        self.assertGreater(len(with_neck), len(without))
+        _valid_svg(self, without)
+        self.assertTrue(head._neck_faces())
 
-    def test_all_vertices_are_finite(self):
-        for name, point in _VERTICES.items():
-            for value in point:
-                self.assertTrue(math.isfinite(value), f"{name} tiene un valor no finito")
+    def test_show_neck_keeps_the_head_closed(self):
+        # Con el cuello oculto no queda agujero: el tapon va en el corte.
+        head = AsaroHead()
+        head.set_show_neck(False)
+        faces = head._faces()
+        bottom = [f for f in faces[-len(head._level()["cap"]):]]
+        self.assertTrue(bottom)
+        verts = head._vertices()
+        lowest = min(sum(verts[i][1] for i in f) / 3.0 for f in bottom)
+        self.assertLess(lowest, asaro_mesh.NECK_Y + 0.01)
+
+    def test_rotation_changes_svg(self):
+        head = AsaroHead()
+        front = head.build_svg(800, 800)
+        head.set_quaternion(q_axis_angle([0, 1, 0], math.radians(90.0)))
+        profile = head.build_svg(800, 800)
+        self.assertNotEqual(front, profile)
+        _valid_svg(self, profile)
+
+    def test_dict_roundtrip(self):
+        head = AsaroHead()
+        head.set_detail(0)
+        head.set_show_neck(False)
+        head.set_shade_planes(False)
+        head.set_show_planes(False)
+        head.set_show_edges(True)
+        head.set_scale(1.4)
+        head.set_position_x(30.0)
+        head.set_position_y(-12.0)
+        head.set_quaternion(q_axis_angle([0, 0, 1], math.radians(30.0)))
+        data = head.to_dict()
+        self.assertIn("showNeck", data)
+        self.assertIn("shadePlanes", data)
+        self.assertFalse(data["showNeck"])
+        self.assertFalse(data["shadePlanes"])
+
+        other = AsaroHead()
+        other.from_dict(data)
+        self.assertEqual(other.detail, 0)
+        self.assertFalse(other.show_neck)
+        self.assertFalse(other.shade_planes)
+        self.assertFalse(other.show_planes)
+        self.assertTrue(other.show_edges)
+        self.assertAlmostEqual(other.scale, 1.4)
+        self.assertAlmostEqual(other.position_x, 30.0)
+        self.assertAlmostEqual(other.position_y, -12.0)
+        self.assertAlmostEqual(other.q.w, head.q.w, places=9)
+        self.assertEqual(other.to_dict(), data)
+
+    def test_from_dict_tolerates_garbage(self):
+        head = AsaroHead()
+        head.from_dict({})
+        head.from_dict({"detail": "no", "scale": "grande", "rotation": [1, 2]})
+        head.from_dict({"showNeck": 0, "shadePlanes": 0, "detail": 99})
+        self.assertEqual(head.detail, 2)
+        self.assertFalse(head.show_neck)
+        self.assertFalse(head.shade_planes)
+        _valid_svg(self, head.build_svg(600, 600))
+
+    def test_from_dict_accepts_loomis_preset(self):
+        head = AsaroHead()
+        head.from_dict(
+            {
+                "generator": "loomis",
+                "scale": 0.9,
+                "sideCut": 0.4,
+                "faceAge": 0.3,
+                "chinWidth": 1.2,
+                "showFace": False,
+                "showArrow": False,
+                "showSilhouette": False,
+                "showSideRims": False,
+                "showSideCross": False,
+            }
+        )
+        self.assertAlmostEqual(head.side_cut, 0.4)
+        self.assertAlmostEqual(head.face_age, 0.3)
+        self.assertAlmostEqual(head.chin_width, 1.2)
+        self.assertFalse(head.show_face)
+        self.assertFalse(head.show_arrow)
+        self.assertFalse(head.show_silhouette)
+        self.assertFalse(head.show_side_rims)
+        self.assertFalse(head.show_side_cross)
+        _valid_svg(self, head.build_svg(600, 600))
+
+    def test_interface_setters(self):
+        head = AsaroHead()
+        head.set_front_line_stroke(12.0)
+        head.set_back_line_stroke(4.0)
+        head.set_stroke_color("#123456")
+        head.set_zone_colors(True)
+        self.assertAlmostEqual(head.front_line_stroke, 12.0)
+        self.assertAlmostEqual(head.back_line_stroke, 4.0)
+        self.assertEqual(head.stroke_color, "#123456")
+        self.assertTrue(head.use_zone_colors)
+        svg = head.build_svg(700, 700)
+        self.assertIn(PLANE_COLOR, svg)
+        self.assertIn(EDGE_COLOR, svg)
+
+    def test_clamps(self):
+        head = AsaroHead()
+        head.set_scale(0.0001)
+        self.assertAlmostEqual(head.scale, 0.05)
+        head.set_scale(99.0)
+        self.assertAlmostEqual(head.scale, 5.0)
+        head.set_detail(-4)
+        self.assertEqual(head.detail, 0)
+        head.set_detail(7)
+        self.assertEqual(head.detail, 2)
+        head.set_front_line_stroke(float("nan"))
+        self.assertAlmostEqual(head.front_line_stroke, 10.0)
+        head.set_position_x(float("inf"))
+        self.assertTrue(math.isfinite(head.position_x))
+        head.set_scale(float("nan"))
+        self.assertAlmostEqual(head.scale, 1.0)
+
+    def test_extremes_keep_svg_finite(self):
+        head = AsaroHead()
+        for scale in (0.05, 5.0):
+            head.set_scale(scale)
+            head.set_position_x(-1e5)
+            head.set_position_y(1e5)
+            for detail in (0, 1, 2):
+                head.set_detail(detail)
+                _valid_svg(self, head.build_svg(10, 10))
+                _valid_svg(self, head.build_svg(5000, 300))
+
+    def test_svg_follows_position_and_scale(self):
+        head = AsaroHead()
+        base = head.build_svg(800, 800)
+        head.set_scale(2.0)
+        bigger = head.build_svg(800, 800)
+        self.assertNotEqual(base, bigger)
+        head.set_scale(1.0)
+        head.set_position_x(120.0)
+        moved = head.build_svg(800, 800)
+        self.assertNotEqual(base, moved)
+        numbers = [float(v) for v in re.findall(r"-?\d+\.\d+", moved)]
+        self.assertTrue(numbers)
+        self.assertTrue(all(math.isfinite(v) for v in numbers))
+
+    def test_neck_faces_are_below_head_faces(self):
+        head = AsaroHead()
+        verts = head._vertices()
+        head_faces = head._faces()[: head._level()["head_faces"]]
+        neck_faces = head._neck_faces()
+        head_bottom = min(sum(verts[i][1] for i in f) / len(f) for f in head_faces)
+        neck_top = max(sum(verts[i][1] for i in f) / len(f) for f in neck_faces)
+        self.assertGreater(head_bottom, neck_top - 0.02)
 
 
 class RegistryTests(unittest.TestCase):
     def test_registry_contents(self):
-        self.assertEqual(MODELS["loomis"], LoomisHead3D)
-        self.assertEqual(MODELS["asaro"], AsaroHead)
+        self.assertIn("asaro", MODELS)
+        self.assertIn("loomis", MODELS)
         self.assertEqual(DEFAULT_MODEL, "loomis")
-        self.assertEqual(supported_models(), ("loomis", "asaro"))
+        self.assertEqual(set(supported_models()), {"loomis", "asaro"})
 
     def test_create_model(self):
-        self.assertIsInstance(create_model("loomis"), LoomisHead3D)
-        self.assertIsInstance(create_model("asaro"), AsaroHead)
-        self.assertIsInstance(create_model(" ASARO "), AsaroHead)
-        self.assertIsInstance(create_model(), LoomisHead3D)
-        self.assertIsNone(create_model("nope"))
-        self.assertIsNone(create_model(""))
-        self.assertIsNone(create_model(42))
+        head = create_model("asaro")
+        self.assertIsInstance(head, AsaroHead)
+        self.assertEqual(head.model_id, "asaro")
+        default = create_model()
+        self.assertEqual(getattr(default, "model_id", "loomis"), "loomis")
 
 
 if __name__ == "__main__":

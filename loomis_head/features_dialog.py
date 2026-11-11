@@ -393,6 +393,10 @@ class AsaroPanel(_ModelPanel):
         outer.addLayout(self._form)
 
         self.planes_check = self._add_flag(t("asaro.show_planes"), "show_planes", True)
+        # Sombrear planos es opcional: si el modelo aun no tiene el campo se
+        # muestra activado y el setter se omite hasta que exista.
+        self.shade_planes_check = self._add_flag(
+            t("asaro.shade_planes"), "shade_planes", True)
         self.edges_check = self._add_flag(t("asaro.show_edges"), "show_edges", True)
         self.neck_check = self._add_flag(t("asaro.show_neck"), "show_neck", True)
 

@@ -1,52 +1,40 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Cabeza Asaro: malla low-poly de planos, sin luz ni sombra.
+"""Cabeza Asaro: malla decimada del busto real, sin luz ni sombra.
 
-El plugin usa la misma interfaz que :class:`LoomisHead3D` (escala, posicion,
-quaternion, trazos, toggles y ``to_dict``/``from_dict``) para que el panel y la
-capa vectorial funcionen sin cambios. Lo propio de Asaro es la malla de planos:
-frente, ceja, cuenca, nariz, pomulo, maxilar, mandibula, menton, oreja,
-occipucio y cuello, dibujada solo con aristas (sin relleno).
+La malla no se dibuja a mano: es una decimacion del ``Asaro_high.obj`` (el
+busto de planos de John Asaro con cuello y peana) que vive como datos estaticos
+en :mod:`loomis_head.asaro_mesh`. Este modulo solo la proyecta:
 
-Construccion
-------------
-La malla se describe como un busto completo con el eje ``y`` hacia arriba, ``z``
-hacia delante (la cara mira a ``+z``) y ``x`` lateral. Se modela solo la mitad
-derecha (``x >= 0``); los vertices de ``x == 0`` son la linea central y se
-comparten con la mitad izquierda.
+* ``detail`` 0/1/2 elige el nivel de la malla (grueso, medio, fino);
+* ``show_neck`` mete o quita el cuello y la peana; sin ellos la cabeza se
+  cierra con el tapon que ya trae el nivel, asi que no queda hueco;
+* ``show_planes`` dibuja las caras, ``show_edges`` las aristas de pliegue y de
+  silueta (las de atras punteadas) y ``shade_planes`` rellena cada cara con un
+  gris segun su orientacion.
 
-Las columnas van del centro de la cara al centro de la nuca:
+Ejes del modelo: ``y`` arriba, ``z`` hacia delante (la cara mira a ``+z``),
+``x`` lateral. Alto 1.5, ancho oreja a oreja ~0.8, fondo nariz-occipucio ~1.0.
+El menton queda en ``asaro_mesh.NECK_Y``; por debajo empieza el cuello.
 
-    F  centro de la cara: frente, nasion, dorso, punta, filtro, labios, surco,
-       menton y garganta (es la silueta del perfil)
-    G  ala de la nariz / comisura   H  pomulo / maxilar / mejilla
-    J  lateral (sien, oreja, gonion)   K  centro de la nuca (occipucio)
-    T, P  coronilla y frente laterales (filas del craneo)
+``shade_planes`` no simula luz: clasifica cada cara por el azimut de su normal
+respecto al frente del modelo y le da un tono plano (frontal, frontal-lateral,
+lateral, trasera) con opacidades 0.18-0.28. No hay foco ni degradado.
 
-La clave para que el perfil se lea: a 90 grados la silueta la forman
-exclusivamente las columnas ``F`` y ``K`` (x == 0), porque el resto queda
-detras. El perfil se disena, por tanto, moviendo ``F`` y ``K``; las demas
-columnas solo agregan pliegues al frente y a los tres cuartos.
+La interfaz es la de :class:`LoomisHead3D` (escala, posicion, quaternion,
+trazos, colores de zona y ``to_dict``/``from_dict``) para que el panel, la capa
+vectorial y los presets funcionen sin cambios.
 
-Proporciones (unidades del modelo, alto total 1.5):
-
-    coronilla y=+0.75   ceja y=+0.40   menton y=-0.30   base y=-0.75
-    ancho oreja a oreja 1.01   fondo nariz-occipucio 0.75
-
-es decir, cara (ceja-menton) 44 % del alto, cuello 30 %, craneo 26 %. El fondo
-(0.75) es 0.71 del alto de la cabeza sola (coronilla-menton, 1.05), que es la
-proporcion real de un craneo; contra el alto del busto seria 0.50.
-
-Las tiras laterales (``G-H``, ``H-J``, ``J-K``) tienen menos filas que la
-central a proposito: donde una tira salta un vertice de la vecina queda una
-esquina en T. Es intencional (malla de planos, no superficie subdividida): no
-abre ningun hueco visible y ahorra caras para mantener el low-poly.
+Licencia: la malla es un derivado de un OBJ descargado; para uso local vale,
+pero antes de publicar hay que revisar los derechos del original y acreditar a
+John Asaro (ver ``CREDITS.md``).
 """
 
 import math
 from collections.abc import Sequence
 
+from . import asaro_mesh
 from .euclid import Vector2, Vector3
 from .geom_polyline import path_str
 from .linalg import Quaternion, q_identity, q_normalize
@@ -60,205 +48,16 @@ _FACING_EPS = 1e-6
 # Diferencia de normal (grados) para considerar una arista un pliegue real.
 _CREASE_DEG = 25.0
 
-# Vertices de la mitad derecha (x >= 0). Los de x == 0 son la linea central y
-# se comparten con la mitad izquierda; el resto se refleja.
-#
-# Ejes: x lateral (+ derecha), y arriba, z hacia delante (la cara mira a +z).
-# El perfil a 90 grados solo ve (z, y): la silueta de la cara es la polilinea
-# F (frente -> ceja -> nasion -> dorso -> punta -> filtro -> labios -> surco ->
-# menton) y la de atras la polilinea K (coronilla -> occipucio -> nuca).
-_HALF_VERTICES: dict[str, tuple[float, float, float]] = {
-    # --- linea central de la cara (silueta del perfil) -------------------
-    "F0": (0.000, 0.750, 0.030),    # coronilla, delante
-    "F1": (0.000, 0.575, 0.255),    # frente (plano alto)
-    "F2": (0.000, 0.360, 0.272),    # ceja / glabela (sobresale)
-    "F3": (0.000, 0.285, 0.190),    # nasion (hundido bajo la ceja)
-    "F4": (0.000, 0.195, 0.288),    # dorso de la nariz
-    "F5": (0.000, 0.100, 0.415),    # punta de la nariz (punto mas adelante)
-    "F6": (0.000, 0.020, 0.280),    # filtro / base nasal (muesca)
-    "F7": (0.000, -0.050, 0.340),   # labio superior
-    "F8": (0.000, -0.140, 0.316),   # labio inferior
-    "F9": (0.000, -0.198, 0.272),   # surco mentoniano (escalon)
-    "F10": (0.000, -0.300, 0.320),  # menton
-    "F11": (0.000, -0.375, 0.170),  # bajo el menton
-    "F12": (0.000, -0.560, 0.020),  # garganta (hueco bajo la mandibula)
-    "F13": (0.000, -0.750, 0.110),  # base del busto, delante
-    # --- linea central de la nuca ----------------------------------------
-    "K0": (0.000, 0.725, -0.135),   # coronilla, detras
-    "K1": (0.000, 0.565, -0.300),   # occipucio alto
-    "K2": (0.000, 0.400, -0.335),   # occipucio
-    "K3": (0.000, 0.200, -0.335),   # occipucio medio (punto mas atras)
-    "K4": (0.000, -0.020, -0.310),  # occipucio bajo
-    "K5": (0.000, -0.240, -0.255),  # nuca (arranca el cuello)
-    "K6": (0.000, -0.520, -0.225),  # cuello, detras
-    "K7": (0.000, -0.750, -0.165),  # base del busto, detras
-    # --- coronilla (fila L0) ---------------------------------------------
-    "T1": (0.165, 0.740, 0.005),
-    "T2": (0.275, 0.690, -0.095),
-    "T3": (0.250, 0.675, -0.225),
-    # --- frente (fila L1) ------------------------------------------------
-    "P1": (0.205, 0.575, 0.195),
-    "P2": (0.355, 0.552, 0.045),
-    "P3": (0.405, 0.545, -0.105),
-    # --- columna G: ala de la nariz, comisura, menton --------------------
-    "G1": (0.125, 0.360, 0.232),    # ceja, interior
-    "G2": (0.098, 0.285, 0.105),    # cuenca, fondo (hundida)
-    "G3": (0.078, 0.200, 0.258),    # lado del dorso
-    "G4": (0.106, 0.105, 0.345),    # ala de la nariz
-    "G5": (0.116, 0.022, 0.268),    # base nasal
-    "G6": (0.155, -0.050, 0.310),   # comisura, arriba
-    "G7": (0.160, -0.140, 0.290),   # comisura, abajo
-    "G8": (0.140, -0.300, 0.282),   # menton, lateral
-    "G9": (0.145, -0.375, 0.155),   # mandibula, bajo el menton
-    "G10": (0.185, -0.750, 0.095),  # base del busto
-    # --- columna H: borde de la cuenca, pomulo, mejilla ------------------
-    "H1": (0.300, 0.340, 0.215),    # ceja, extremo exterior
-    "H2": (0.340, 0.265, 0.070),    # borde orbitario exterior (hundido)
-    "H3": (0.350, 0.190, 0.235),    # pomulo (bajo la cuenca)
-    "H4": (0.320, 0.020, 0.190),    # mejilla
-    "H5": (0.295, -0.285, 0.160),   # maxilar
-    "H6": (0.235, -0.380, 0.115),   # mandibula, bajo el maxilar
-    "H7": (0.260, -0.750, 0.000),   # base del busto
-    # --- columna J: sien, oreja, gonion ----------------------------------
-    "J1": (0.442, 0.405, -0.030),   # sien (ancho maximo del craneo)
-    "J3": (0.442, 0.205, -0.120),   # delante de la oreja
-    "J4": (0.410, 0.000, -0.190),   # gonion (angulo de la mandibula)
-    "J5": (0.335, -0.245, -0.175),  # detras del angulo
-    "J6": (0.255, -0.378, -0.075),  # mandibula, bajo la oreja
-    "J7": (0.270, -0.750, -0.115),  # base del busto
-    # --- oreja (cuna lateral; isla aparte, como en el modelo real) -------
-    "E1": (0.476, 0.295, -0.100),   # oreja, arriba
-    "E2": (0.505, 0.185, -0.160),   # helix (punto mas lateral del busto)
-    "E3": (0.482, 0.005, -0.160),   # lobulo
-    "E4": (0.470, 0.140, -0.275),   # raiz posterior
-    # --- vertices solo del detalle 2 (centros de plano) ------------------
-    "N1": (0.277, 0.637, 0.041),    # centro del plano de la frente
-    "N2": (0.057, -0.095, 0.314),   # centro del plano del labio
-    "N3": (0.170, 0.115, 0.245),    # centro del plano de la mejilla
-}
-
-# (nivel de detalle minimo, vertices en orden). Nivel 0 = planos grandes (malla
-# minima: sin oreja ni pliegues finos), 1 = construccion estandar, 2 = planos
-# subdivididos (ver ``_HALF_FINE``).
-#
-# Columnas y tiras, de delante a detras: F (centro), G, H, J, K (centro nuca).
-# Una tira puede saltarse un vertice de la columna vecina: la arista larga que
-# dibuja es un pliegue real (pomulo, comisura, mandibula), no un error.
-_HALF_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
-    # --- coronilla: tapa y dos filas hasta la ceja -----------------------
-    (0, ("F0", "T1", "T2", "T3", "K0")),           # tapa de la coronilla
-    (0, ("F0", "T1", "P1", "F1")),
-    (0, ("T1", "T2", "P2", "P1")),
-    (0, ("T2", "T3", "P3", "P2")),
-    (0, ("T3", "K0", "K1", "P3")),
-    (0, ("F1", "F2", "G1", "P1")),
-    (0, ("P1", "G1", "H1", "P2")),
-    (1, ("P2", "H1", "J1", "P3")),                 # sien
-    (0, ("P3", "J1", "K2", "K1")),
-    # --- tira F-G: perfil de la cara (hasta la mandibula) ----------------
-    (0, ("F2", "F3", "G2", "G1")),                 # ceja -> nasion
-    (0, ("F3", "F4", "G3", "G2")),                 # nasion -> dorso
-    (0, ("F4", "F5", "G4", "G3")),                 # dorso -> punta
-    (0, ("F5", "F6", "G5", "G4")),                 # punta -> base nasal
-    (0, ("F6", "F7", "G6", "G5")),                 # base -> labio superior
-    (0, ("F7", "F8", "G7", "G6")),                 # labio superior -> inferior
-    (1, ("F8", "F9", "G7")),                       # surco mentoniano
-    (0, ("F9", "F10", "G8", "G7")),                # surco -> menton
-    (0, ("F10", "F11", "G9", "G8")),               # menton -> mandibula
-    # --- tira G-H: cuenca, pomulo, mejilla, maxilar ----------------------
-    (1, ("G1", "G2", "H2", "H1")),                 # cuenca (hundida)
-    (0, ("G2", "G3", "H3", "H2")),                 # pomulo
-    (0, ("G3", "G4", "G5", "H4", "H3")),           # mejilla (con el ala nasal)
-    (1, ("G5", "G6", "G7", "H4")),                 # comisura
-    (0, ("G7", "G8", "H5", "H4")),                 # maxilar
-    (1, ("G8", "G9", "H6", "H5")),                 # mandibula
-    # --- tira H-J: lateral del craneo y del maxilar ----------------------
-    (1, ("H1", "H2", "J3", "J1")),                 # sien -> delante de la oreja
-    (0, ("H2", "H3", "J3")),                       # pomulo
-    (0, ("H3", "H4", "J4", "J3")),                 # pomulo -> mejilla
-    (0, ("H4", "H5", "J5", "J4")),                 # mejilla -> gonion
-    (1, ("H5", "H6", "J6", "J5")),                 # mandibula
-    # --- tira J-K: occipucio ---------------------------------------------
-    (0, ("J1", "J3", "K3", "K2")),
-    (0, ("J3", "J4", "K4", "K3")),
-    (0, ("J4", "J5", "K5", "K4")),
-    (1, ("J5", "J6", "K5")),
-    # --- oreja -----------------------------------------------------------
-    (1, ("E1", "E2", "E4")),
-    (1, ("E2", "E3", "E4")),
+# Relleno neutro por orientacion del plano, NO luz direccional: la cara se
+# clasifica por su normal respecto al frente del modelo (azimut) y recibe un
+# gris calido claro. Opacidades bajas, dentro del rango 0.18-0.28 del contrato.
+# (clase, relleno, opacidad, azimut maximo en grados)
+_SHADE_TONES: tuple[tuple[str, str, float, float], ...] = (
+    ("frontal", "#f2efe9", 0.18, 35.0),
+    ("frontal-lateral", "#b4aea2", 0.22, 70.0),
+    ("lateral", "#857e72", 0.25, 115.0),
+    ("trasera", "#625d54", 0.28, 180.1),
 )
-
-# Cuello y base del busto: solo con ``show_neck``. La fila superior es el anillo
-# de la mandibula (F11, G9, H6, J6, K5); la inferior, la base.
-_HALF_NECK_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
-    (0, ("F11", "F12", "G10", "G9")),              # garganta
-    (0, ("F12", "F13", "G10")),                    # garganta -> base
-    (0, ("G9", "G10", "H7", "H6")),                # lateral del cuello
-    (0, ("H6", "H7", "J7", "J6")),
-    (0, ("J6", "J7", "K7", "K6", "K5")),           # nuca del cuello
-)
-
-# Tapon cuando no hay cuello: la mandibula se cierra y la cabeza queda maciza.
-_HALF_CLOSED_FACES: tuple[tuple[int, tuple[str, ...]], ...] = (
-    (0, ("F11", "G9", "H6", "J6", "K5")),
-)
-
-# Detalle 2: cada cara se parte en abanico desde un vertice central. Se declara
-# (cara original, vertice nuevo, caras nuevas); la original se sustituye, de
-# modo que el nivel 2 subdivide planos grandes sin duplicar superficie.
-_HALF_FINE: tuple[
-    tuple[tuple[str, ...], str, tuple[tuple[str, ...], ...]], ...
-] = (
-    (
-        ("T1", "T2", "P2", "P1"),
-        "N1",
-        (
-            ("T1", "N1", "P1"),
-            ("T1", "T2", "N1"),
-            ("T2", "P2", "N1"),
-            ("P2", "P1", "N1"),
-        ),
-    ),
-    (
-        ("F7", "F8", "G7", "G6"),
-        "N2",
-        (
-            ("F7", "N2", "G6"),
-            ("F7", "F8", "N2"),
-            ("F8", "G7", "N2"),
-            ("G7", "G6", "N2"),
-        ),
-    ),
-    (
-        ("G3", "G4", "G5", "H4", "H3"),
-        "N3",
-        (
-            ("G3", "N3", "H3"),
-            ("G3", "G4", "N3"),
-            ("G4", "G5", "N3"),
-            ("G5", "H4", "N3"),
-            ("H4", "H3", "N3"),
-        ),
-    ),
-)
-
-
-def _mirrored_name(name: str) -> str:
-    x = _HALF_VERTICES[name][0]
-    return name if abs(x) < 1e-9 else name + "L"
-
-
-def _build_vertices() -> dict[str, tuple[float, float, float]]:
-    out: dict[str, tuple[float, float, float]] = {}
-    for name, (x, y, z) in _HALF_VERTICES.items():
-        out[name] = (x, y, z)
-        if abs(x) >= 1e-9:
-            out[name + "L"] = (-x, y, z)
-    return out
-
-
-_VERTICES = _build_vertices()
-_MIRROR = {name: _mirrored_name(name) for name in _HALF_VERTICES}
 
 
 def _newell(points: Sequence[tuple[float, float, float]]) -> tuple[float, float, float]:
@@ -275,6 +74,35 @@ def _newell(points: Sequence[tuple[float, float, float]]) -> tuple[float, float,
     if length < 1e-12:
         return (0.0, 0.0, 0.0)
     return (nx / length, ny / length, nz / length)
+
+
+def _shade_index(normal: tuple[float, float, float]) -> int:
+    """Clase de orientacion del plano respecto al frente del modelo.
+
+    0 frontal (mira a +z), 1 frontal-lateral, 2 lateral (mira al costado),
+    3 trasera (mira a la nuca). Es orientacion, no luz: no hay direccion de
+    foco ni gradiente, solo cuatro tonos planos.
+    """
+    nx, ny, nz = normal
+    if nz >= 0.0:
+        azimuth = math.degrees(math.atan2(abs(nx), nz))
+    else:
+        azimuth = 180.0 - math.degrees(math.atan2(abs(nx), -nz))
+    # Los planos horizontales (coronilla, suelo de la peana) no son "traseros"
+    # aunque su normal no tenga componente z: se quedan en el tono lateral.
+    if abs(ny) > 0.55:
+        azimuth = min(azimuth, 90.0)
+    for index, tone in enumerate(_SHADE_TONES):
+        if azimuth <= tone[3]:
+            return index
+    return len(_SHADE_TONES) - 1
+
+
+def _polygon_d(points: Sequence[Vector2]) -> str:
+    """Subpath cerrado de un poligono, en el formato que acepta el plugin."""
+    head = f"M{points[0].x:.3f} {points[0].y:.3f}"
+    tail = "".join(f"L{p.x:.3f} {p.y:.3f}" for p in points[1:])
+    return head + tail + "Z"
 
 
 def _finite(value: object, default: float) -> float:
@@ -304,6 +132,7 @@ class AsaroHead:
         self.show_planes: bool = True
         self.show_edges: bool = True
         self.show_neck: bool = True
+        self.shade_planes: bool = True
         self.detail: int = 1
         # Trazos y color.
         self.front_line_stroke: float = 10.0
@@ -359,12 +188,15 @@ class AsaroHead:
     def set_show_neck(self, enable: bool) -> None:
         self.show_neck = bool(enable)
 
+    def set_shade_planes(self, enable: bool) -> None:
+        self.shade_planes = bool(enable)
+
     def set_detail(self, detail: int) -> None:
         try:
             level = int(round(float(detail)))
         except (TypeError, ValueError):
             level = 1
-        self.detail = max(0, min(2, level))
+        self.detail = max(0, min(asaro_mesh.LEVEL_COUNT - 1, level))
 
     # --- compatibilidad Loomis (sin efecto en la malla) -------------------
     def set_sidecut(self, side_cut: float) -> None:
@@ -407,6 +239,7 @@ class AsaroHead:
             "showPlanes": self.show_planes,
             "showEdges": self.show_edges,
             "showNeck": self.show_neck,
+            "shadePlanes": self.shade_planes,
             "detail": self.detail,
             "frontStroke": self.front_line_stroke,
             "backStroke": self.back_line_stroke,
@@ -447,6 +280,7 @@ class AsaroHead:
         self.set_show_planes(flag("showPlanes", self.show_planes))
         self.set_show_edges(flag("showEdges", self.show_edges))
         self.set_show_neck(flag("showNeck", self.show_neck))
+        self.set_shade_planes(flag("shadePlanes", self.shade_planes))
         self.set_detail(num("detail", self.detail))
         self.set_front_line_stroke(num("frontStroke", self.front_line_stroke))
         self.set_back_line_stroke(num("backStroke", self.back_line_stroke))
@@ -464,77 +298,83 @@ class AsaroHead:
         self.set_side_cross(flag("showSideCross", self.show_side_cross))
 
     # --- malla ------------------------------------------------------------
-    def _half_faces(self) -> list[tuple[str, ...]]:
-        """Caras de la mitad derecha para el detalle y el cuello actuales."""
-        out: list[tuple[str, ...]] = []
-        for level, names in _HALF_FACES:
-            if level <= self.detail:
-                out.append(names)
-        if self.detail >= 2:
-            for original, _centre, halves in _HALF_FINE:
-                if original in out:
-                    out.remove(original)
-                    out.extend(halves)
+    def _level(self) -> dict:
+        """Nivel de la malla para el detalle actual."""
+        return asaro_mesh.get_level(self.detail)
+
+    def _vertices(self) -> tuple[tuple[float, float, float], ...]:
+        return self._level()["verts"]
+
+    def _faces(self) -> list[tuple[int, ...]]:
+        """Caras a dibujar: cabeza + (cuello visible o tapon del corte).
+
+        En los datos, las primeras ``head_faces`` caras son la cabeza y el
+        resto el cuello y la peana. Sin cuello se cambian por el tapon, de modo
+        que la cabeza sigue cerrada.
+        """
+        level = self._level()
+        faces = level["faces"]
+        head = level["head_faces"]
         if self.show_neck:
-            for level, names in _HALF_NECK_FACES:
-                if level <= self.detail:
-                    out.append(names)
-        else:
-            for level, names in _HALF_CLOSED_FACES:
-                if level <= self.detail:
-                    out.append(names)
-        return out
+            return list(faces)
+        return list(faces[:head]) + list(level["cap"])
 
-    def _faces(self) -> list[tuple[str, ...]]:
-        """Caras completas (derecha + reflejada)."""
-        faces: list[tuple[str, ...]] = []
-        for names in self._half_faces():
-            faces.append(names)
-            mirrored = tuple(_MIRROR[name] for name in names)
-            if mirrored != names:
-                faces.append(mirrored)
-        return faces
+    def _neck_faces(self) -> list[tuple[int, ...]]:
+        """Solo las caras del cuello y la peana (para los tests y el conteo)."""
+        level = self._level()
+        return list(level["faces"][level["head_faces"]:])
 
-    def _face_normal(self, names: Sequence[str]) -> tuple[float, float, float]:
-        points = [_VERTICES[name] for name in names]
+    def _face_normal(self, face: Sequence[int]) -> tuple[float, float, float]:
+        """Normal exterior de la cara, orientada respecto al eje del busto.
+
+        El busto es estrellado alrededor del eje vertical (x=z=0): el exterior
+        de una cara siempre tiene componente radial positiva. Las caras
+        horizontales (coronilla, suelo de la peana) se orientan por su altura.
+        """
+        vertices = self._vertices()
+        points = [vertices[i] for i in face]
         nx, ny, nz = _newell(points)
         cx = sum(p[0] for p in points) / len(points)
         cy = sum(p[1] for p in points) / len(points)
         cz = sum(p[2] for p in points) / len(points)
-        if nx * cx + ny * cy + nz * cz < 0.0:
-            return (-nx, -ny, -nz)
-        return (nx, ny, nz)
+        if abs(ny) > 0.7:
+            outward = ny * cy > 0.0
+        else:
+            outward = nx * cx + nz * cz >= 0.0
+        if outward:
+            return (nx, ny, nz)
+        return (-nx, -ny, -nz)
 
     def _edge_kinds(
-        self, faces: Sequence[Sequence[str]]
-    ) -> list[tuple[str, str, str]]:
+        self, faces: Sequence[Sequence[int]]
+    ) -> list[tuple[int, int, str]]:
         """Aristas a dibujar, con su tipo: ``front``, ``back`` o ``silhouette``.
 
         ``front``/``back`` dicen de que lado de la cabeza queda la arista (las de
         atras se dibujan punteadas). ``silhouette`` es el contorno: la arista
         entre una cara que mira a camara y otra que no. Sin ese caso el perfil
-        quedaria abierto, porque en el centro de la cara las dos mitades son
-        coplanares y el pliegue no llega al umbral.
+        quedaria abierto, porque en el centro de la cara las caras vecinas son
+        casi coplanares y el pliegue no llega al umbral.
         """
         normals: list[tuple[float, float, float]] = []
         facing: list[bool] = []
-        for names in faces:
-            nx, ny, nz = self._face_normal(names)
+        for face in faces:
+            nx, ny, nz = self._face_normal(face)
             normal_cam = self.q * Vector3(nx, ny, nz)
             normals.append((nx, ny, nz))
             facing.append(normal_cam.z > _FACING_EPS)
 
-        adjacency: dict[tuple[str, str], list[int]] = {}
-        for index, names in enumerate(faces):
-            n = len(names)
+        adjacency: dict[tuple[int, int], list[int]] = {}
+        for index, face in enumerate(faces):
+            n = len(face)
             for i in range(n):
-                a = names[i]
-                b = names[(i + 1) % n]
+                a = face[i]
+                b = face[(i + 1) % n]
                 key = (a, b) if a < b else (b, a)
                 adjacency.setdefault(key, []).append(index)
 
         cos_limit = math.cos(math.radians(_CREASE_DEG))
-        out: list[tuple[str, str, str]] = []
+        out: list[tuple[int, int, str]] = []
         for key, owners in adjacency.items():
             if len(owners) == 1:
                 kind = "front" if facing[owners[0]] else "back"
@@ -555,7 +395,7 @@ class AsaroHead:
                 out.append((key[0], key[1], kind))
         return out
 
-    def _edges(self, faces: Sequence[Sequence[str]]) -> list[tuple[str, str]]:
+    def _edges(self, faces: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
         """Aristas unicas de pliegue o silueta, cada una una sola vez."""
         return [(a, b) for a, b, _kind in self._edge_kinds(faces)]
 
@@ -579,22 +419,34 @@ class AsaroHead:
         h = _finite(height, 800.0)
         s = min(w, h) * 0.3 * self.scale
 
+        vertices = self._vertices()
         faces = self._faces()
-        visible: list[tuple[float, list[Vector2]]] = []
-        for names in faces:
-            nx, ny, nz = self._face_normal(names)
-            normal_cam = self.q * Vector3(nx, ny, nz)
+        visible: list[tuple[float, tuple[float, float, float], list[Vector2]]] = []
+        for face in faces:
+            normal = self._face_normal(face)
+            normal_cam = self.q * Vector3(*normal)
             if normal_cam.z <= _FACING_EPS:
                 continue
-            points = [self._to_camera(_VERTICES[name]) for name in names]
+            points = [self._to_camera(vertices[i]) for i in face]
             mean_z = sum(p.z for p in points) / len(points)
-            visible.append((mean_z, [self._to_screen(p, s) for p in points]))
+            visible.append(
+                (mean_z, normal, [self._to_screen(p, s) for p in points])
+            )
         # Painter's algorithm: primero lo que esta mas lejos de camara.
         visible.sort(key=lambda item: item[0])
 
+        # Rellenos neutros por orientacion. Van antes que las aristas y no
+        # llevan trazo: son valor de plano, no luz.
+        shade: list[list[str]] = [[] for _ in _SHADE_TONES]
+        if self.show_planes and self.shade_planes:
+            for _z, normal, screen in visible:
+                if len(screen) < 3:
+                    continue
+                shade[_shade_index(normal)].append(_polygon_d(screen))
+
         plane_paths: list[str] = []
         if self.show_planes:
-            for _, screen in visible:
+            for _z, _normal, screen in visible:
                 if len(screen) < 3:
                     continue
                 plane_paths.append(path_str([*screen, screen[0]]))
@@ -604,8 +456,8 @@ class AsaroHead:
         if self.show_edges:
             for a, b, kind in self._edge_kinds(faces):
                 segment = [
-                    self._to_camera(_VERTICES[a]),
-                    self._to_camera(_VERTICES[b]),
+                    self._to_camera(vertices[a]),
+                    self._to_camera(vertices[b]),
                 ]
                 path = path_str([self._to_screen(p, s) for p in segment])
                 if kind == "back":
@@ -618,6 +470,15 @@ class AsaroHead:
         dash_attr = f' stroke-dasharray="{dash_back}"' if dash_back else ""
 
         svg: list[str] = ['<svg xmlns="http://www.w3.org/2000/svg">']
+        for (name, fill, opacity, _limit), polygons in zip(_SHADE_TONES, shade):
+            if not polygons:
+                continue
+            svg.append(f'<g title="asaro-shade-{name}" stroke="none">')
+            svg.append(
+                f'<path d="{"".join(polygons)}" fill="{fill}" '
+                f'fill-opacity="{opacity}" stroke="none"/>'
+            )
+            svg.append("</g>")
         if plane_paths:
             svg.append(
                 f'<g title="asaro-planes" fill="none" stroke="{plane_color}">'
