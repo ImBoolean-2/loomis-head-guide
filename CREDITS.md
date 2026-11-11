@@ -32,7 +32,37 @@
     integration.
   - Tests, CI, SPDX headers and contribution templates.
 
+## Asaro head mesh
+
+The **Asaro** model is not written from scratch: it is a derivative of a Sketchfab model
+of the classic plane head. Two licenses apply to this repository, so read
+[LICENSE-ASSETS.md](LICENSE-ASSETS.md) before redistributing the mesh.
+
+- **John Asaro** — designer of the original Asaro head, the planar bust this model studies.
+  The mesh is an interpretation of his design; he is credited as the author of it.
+- **ivan4akir** — [Asaro-head](https://sketchfab.com/3d-models/asaro-head-27a3328095ca412eaa5dde8a5da9ff3b)
+  (Sketchfab), **CC BY 4.0**. Source of the mesh used here (`Asaro_high.obj`, the bust with
+  neck and base).
+- **fabianoaraujo** — [Simple Asaro Head](https://sketchfab.com/3d-models/simple-asaro-head-fd74ad764a4e4619b72733316dc574b4)
+  (Sketchfab), **CC BY 4.0**. Reviewed as a reference and **discarded**: no geometry from it
+  is used. Credited because it was part of the comparison and its license is acknowledged.
+
+Changes made in this repository (the notice CC BY 4.0 requires):
+
+- `loomis_head/asaro_mesh.py`: decimated from `Asaro_high.obj` — reoriented (+90° in Y,
+  face towards +Z), box-centred, scaled to height 1.5, vertex clustering denser at the
+  features, degenerate/duplicate/sliver faces removed, neck and base split by height and the
+  neck cut capped. Three detail levels (334 / 634 / 1195 faces).
+- `loomis_head/asaro_clean_mesh.py`: hand retopology of the plane structure, measured on the
+  same silhouette and frame.
+
+The original `.obj` files are not in this repository, and the mesh data stays under
+**CC BY 4.0** with the attribution above; it is not relicensed as GPL. The code around it
+is GPL-3.0-only.
+
 ## License
 
-GPL-3.0-only, the same family as the original GPL-3.0. `euclid.py` is LGPL-2.1. See
-[LICENSE](LICENSE).
+- Code: **GPL-3.0-only**, the same family as the original GPL-3.0. `euclid.py` is
+  **LGPL-2.1**. See [LICENSE](LICENSE).
+- Asaro mesh assets: **CC BY 4.0**, © their respective authors, with the attribution and
+  modification notice above. See [LICENSE-ASSETS.md](LICENSE-ASSETS.md).

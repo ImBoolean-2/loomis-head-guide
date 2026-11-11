@@ -9,7 +9,8 @@ needed by the docker and the preview widget; the geometry and its tests do not i
 | --- | --- |
 | `loomis_head_generator.py` | Pure Python Loomis geometry, parameters, `to_dict`/`from_dict`, SVG |
 | `asaro.py` | Pure Python Asaro planar head: mesh, projection, SVG |
-| `asaro_mesh.py` | Static Asaro mesh data: three decimated levels from the real scan, `neck` flag, cut cap |
+| `asaro_clean_mesh.py` | Static hand retopology (0.7.4): 122 / 242 / 272 faces, mouth band, ear concha, banding, `PIVOT_LOCAL` |
+| `asaro_mesh.py` | Static Asaro mesh data: three decimated levels from the real scan, `neck` flag, cut cap (reference for tests, not drawn) |
 | `models.py` | Model registry: `MODELS`, `DEFAULT_MODEL`, `create_model`, `supported_models` |
 | `qt_compat.py` | PyQt5/PyQt6 shim: every module imports Qt from here |
 | `loomis_head_plugin.py` | Docker, Krita integration, guide manager, presets, Grimoire bridge |
@@ -41,15 +42,24 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   `back_line_stroke` and `dash_back`. Own parameters: `show_planes`, `show_edges`,
   `show_neck`, `detail` (0..2). It also carries the Loomis attributes and setters as
   defaults/no-ops so `_sync_ui_from_model` does not break; the UI hides them for Asaro.
-- **Asaro mesh (0.7.3)**: `asaro.py` no longer builds vertices; it reads `asaro_mesh.py`,
-  which holds the decimation of `Asaro_high.obj` as static data (no OBJ, no external
-  dependency). `ASARO_LEVELS` has three levels — 334 / 634 / 1195 faces (283 / 503 / 1028
-  head faces plus 51 / 131 / 167 neck+base) with 209 / 390 / 765 vertices — and each level
-  carries `verts` (oriented +90° Y, centred, height 1.5), `faces` (counter-clockwise from
-  outside; head first, then neck), `head_faces` (how many of the first faces are head),
-  `cap` (triangles that close the cut) and `bbox`. `NECK_Y` is the height threshold that
-  split head from neck; the generator that produced this file is a temporary tool and is
-  not shipped.
+- **Asaro mesh (0.7.4)**: `asaro.py` reads the hand retopology in `asaro_clean_mesh.py`
+  (static data, no OBJ, no external dependency). `ASARO_CLEAN_LEVELS` has three levels —
+  **122 / 242 / 272 faces** (91 / 193 / 217 head faces plus neck+base) with 131 / 257 / 289
+  vertices — and each level carries `verts` (oriented +90° Y, centred, height 1.5), `faces`
+  (counter-clockwise from outside; head first, then neck), `head_faces`, `cap` (the fan that
+  closes the cut) and `neck` (per-face flag). Rows are flow lines with their own height per
+  column; the mouth is a three-row band, the ear has a hollow concha, and the intermediate
+  columns band in the temple, cheekbone, orbital and mastoid planes. `NECK_Y` is the height
+  threshold that splits head from neck. `asaro_mesh.py` (the 0.7.3 decimation: 334 / 634 /
+  1195 faces) stays as reference for tests and comparisons and is no longer drawn.
+- **Pivot and position semantics**: `LoomisHead3D.pivot_local` is `Vector3(0, 0, 0)` (the
+  cranium sphere centre); `AsaroHead.pivot_local` is `asaro_clean_mesh.PIVOT_LOCAL`
+  (`(0.0, 0.2852, -0.0354)`), the area centroid of the head faces of the finest level —
+  the centre of the skull between ears and eyes, not the bust bbox centre (which includes
+  neck and base). `position_x/y` is the **pivot position in the document**: `build_svg`
+  subtracts `pivot_local` before rotating and projecting, so the pivot lands exactly on
+  `position_x/y` and rotating or switching model/type/sex does not move the head. The JSON
+  schema is unchanged; only the documented semantics changed.
 - **`show_neck`**: `AsaroHead.show_neck` (default `True`), `set_show_neck()`, `showNeck` in
   `to_dict`/`from_dict` and the **Show neck** checkbox in `AsaroPanel`
   (`asaro.show_neck`). With the neck off, the faces whose `neck` flag is set are filtered
@@ -57,11 +67,14 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   `shade_planes` (default `True`) fills each face by normal azimuth in neutral tones
   (opacity 0.18–0.28, no directional light) and round-trips as `shadePlanes`; `show_planes`,
   `show_edges` and `detail` (0..2 → level) still change the SVG. `test_asaro.py` locks the
-  mesh sizes, proportions, the profile landmarks, the neck toggle/cap, `shade_planes` and
-  the round-trip; the suite is 82 tests (40 generator + 42 Asaro).
-- **License / local-only**: the mesh is derived from a downloaded scan of the Asaro head and
-  the original rights are not confirmed. 0.7.3 is a local build: no public ZIP or patch
-  until the model licence is cleared and John Asaro is credited.
+  mesh sizes, the mouth band, the ear concha, the closed mesh, the pivot, `shade_planes`
+  and the round-trip; the suite is 121 tests (44 generator + 77 Asaro).
+- **License**: the code is **GPL-3.0-only**; the Asaro meshes are **CC BY 4.0**, not GPL —
+  derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), design by **John Asaro**;
+  "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed and not used. Attribution
+  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.4
+  is a **local build**: no public ZIP or patch until it is validated in Krita; `release/`
+  keeps the 0.7.2 artifacts, the last public build.
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
@@ -83,6 +96,20 @@ selector, 3D preview, view selector, library and actions) and five scrollable ta
 Each panel is bound to the active model with `set_model`/`sync_from_model` when the guide or
 the model changes. With Asaro active, the Guides and Hair tabs are disabled and the Loomis-only
 Settings rows are hidden.
+
+## Pivot marker and redraw
+
+- After each SVG draw the docker adds an invisible `<circle>` named **`loomis-pivot`**
+  (1 px, no stroke, opacity 0) at `(position_x, position_y)` inside the layer. It does not
+  change the render or the visible bounds, and it is recreated at the pivot on every draw.
+- `sync_manual_position()` (120 ms timer) reads the marker's absolute position
+  (`absoluteTransformation().map(boundingBox().center())`), never `layer.bounds()`. A manual
+  canvas move is therefore applied **1:1** to `position_x/y` once, the spinboxes update and
+  nothing is redrawn. Without a marker (legacy load) it skips the sync and waits for the next
+  draw, so there is no drift.
+- The canvas redraws **500 ms** after the last change (`REDRAW_INTERVAL_MS`, single-shot
+  timer restarted by every slider/spin/rotation change); the docker preview runs live.
+  `valueChanged` only updates the preview; `sliderReleased` flushes immediately.
 
 ## Head structure
 
@@ -110,8 +137,8 @@ Settings rows are hidden.
 - Each document has its own state, keyed by `Document.fileName()`. Unsaved documents use
   a session key and do not survive a restart.
 - `_set_active_guide()` applies the delta between the layer's current centre and the
-  saved centre, so a head moved while inactive does not jump back. It also calls
-  `Document.setActiveNode()`.
+  saved centre, so a head moved while inactive does not jump back; the marker is then
+  recreated at the pivot. It also calls `Document.setActiveNode()`.
 
 ## State files
 

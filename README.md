@@ -32,13 +32,19 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 - **Two head models**: a **Model** combo switches between the **Loomis** construction and a
   low-poly **Asaro** planar bust (face contours with planes, edges, detail level and a
   neck). Each model keeps its own state, so switching back and forth does not lose features
-  or hair, and the shared position, rotation, scale and stroke follow the guide. As of 0.7.3
-  the Asaro mesh is an exact decimation of the real bust — 334 / 634 / 1195 faces at
-  detail 0 / 1 / 2, neck and base included — with the **Show neck** and **Shade planes**
-  toggles. It is still a faceted low-poly reference, not a smooth anatomical sculpt
-  (**local build**: not published as a ZIP until the model rights are confirmed).
+  or hair, and the shared position, rotation, scale and stroke follow the guide. As of 0.7.4
+  the Asaro mesh is a hand retopology over the real bust — 122 / 242 / 272 faces at
+  detail 0 / 1 / 2, mouth band, ear with concha and plane banding, neck and base included —
+  with the **Show neck** and **Shade planes** toggles. It is still a faceted low-poly
+  reference, not a smooth anatomical sculpt (licensed **CC BY 4.0** with attribution, see
+  [LICENSE-ASSETS.md](LICENSE-ASSETS.md); **local build**: the public ZIP is published
+  after the pending fixes).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
+- **Pivot and redraw (0.7.4)**: the head rotates around an invisible pivot at the centre of
+  the skull, so rotating or switching model/type/sex keeps it in place; an invisible
+  `loomis-pivot` marker follows manual canvas moves and syncs them to X/Y 1:1. The docker
+  preview is live while you drag, and the vector layer redraws 500 ms after you stop.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
   touch the others.
 - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
@@ -77,7 +83,8 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 is local-only).
+1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 and 0.7.4 are
+   local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -102,8 +109,8 @@ simulated, not run on a real Krita 6.
 
 Krita 5.3.4's Python API does not expose `beginUndo`/`endUndo` or `KUndo2Command`, so the
 plugin cannot group a redraw into one undo step. As a mitigation the vector layer redraws
-with a 220 ms debounce and flushes when a slider is released, which keeps a drag to a few
-undo entries instead of dozens. A real single-step undo needs C++ and is tracked as debt.
+500 ms after the last change and flushes when a slider is released, which keeps a drag to a
+few undo entries instead of dozens. A real single-step undo needs C++ and is tracked as debt.
 
 ## Languages
 
@@ -158,12 +165,19 @@ uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
 The second model is a low-poly study of the **Asaro head** (the planar head used to learn
 the planes of the face). It is drawn as face contours, not as a shaded sculpt:
 
-- **Exact mesh**: since 0.7.3 it is a decimated version of the real **Asaro_high** scan
-  (bust with neck and base), kept as static data in `loomis_head/asaro_mesh.py` — no OBJ at
-  runtime. Vertex clustering is denser at the features (chin, lips, nose, eyes, ear) than
-  at the cranium, neck and base, so the profile and the 3/4 keep the real silhouette.
-- **Detail levels** (head / neck+base): 283 / 51 = **334 faces** at detail 0,
-  503 / 131 = **634** at detail 1 and 1028 / 167 = **1195** at detail 2.
+- **Clean retopology (0.7.4)**: since 0.7.4 it is a hand retopology over the silhouette of
+  the real **Asaro_high** bust, kept as static data in `loomis_head/asaro_clean_mesh.py` —
+  no OBJ at runtime. Rows are flow lines (the mouth line dips in the centre, the brow arches
+  over the socket), the mouth is a three-row band, the ear has a hollow concha and the
+  temple, cheekbone, orbital and mastoid planes are banded in; the mesh is closed. The
+  0.7.3 decimation stays in `asaro_mesh.py` as a reference for tests and comparisons.
+- **Detail levels** (head + neck and base, 0.7.4): **122 faces** at detail 0, **242** at
+  detail 1 (193 head) and **272** at detail 2 (217 head), with 131 / 257 / 289 vertices.
+- **Invisible pivot**: the head rotates around the centre of the skull (for Asaro, the area
+  centroid of the head faces, `(0.0, 0.2852, -0.0354)` in mesh coordinates; for Loomis, the
+  sphere centre). `position_x/y` is the pivot, so rotating or switching model/type/sex does
+  not move the head. An invisible `loomis-pivot` marker in the layer tracks manual canvas
+  moves and syncs them **1:1** to X/Y.
 - **Neck**: **Show neck** in the Asaro panel (`showNeck` in JSON, on by default). With it
   off the neck and base faces are hidden and the cut is capped, so the head stays a closed
   solid.
@@ -171,16 +185,20 @@ the planes of the face). It is drawn as face contours, not as a shaded sculpt:
   a neutral tone picked from its orientation — it is a plane reading, not a directional
   light; opacity 0.18–0.28.
 - **Controls**: planes, edges, shade and detail (0 coarse, 1 standard, 2 fine).
-- **References**: mesh decimated from the downloaded Asaro scan; `heads/example-asaro.json`
-  is the shareable sample.
+- **References**: retopologised derivative of the Sketchfab model **Asaro-head** by
+  **ivan4akir** (CC BY 4.0), a scan of the plane head designed by **John Asaro**;
+  `heads/example-asaro.json` is the shareable sample.
 
 It is deliberately a **faceted reference**: it is a plane study, not a smooth sculpt, and
 every silhouette is a chain of segments. Use it to place planes, then draw over it.
 
-> **License / local build.** The mesh is derived from a downloaded scan of the Asaro head and
-> the rights of the original model are not confirmed. 0.7.3 is a **local build**: there is
-> no public ZIP or patch until the model rights are cleared and John Asaro is credited.
-> `release/` still carries the 0.7.2 artifacts.
+> **License of the mesh.** The mesh data is **CC BY 4.0**, not GPL: it is a decimated and
+> retopologised derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), whose design is by
+> **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
+> the full text and a copy-paste credit line are in
+> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.4
+> is a **local build**: the public ZIP ships only after validating it in Krita; until then
+> `release/` carries the 0.7.2 artifacts, the last public build.
 
 ## Development
 
@@ -189,8 +207,9 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The 82 unit tests (40 generator + 42 Asaro) do not need Krita, Qt or PyQt5. The UI/docker
-needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying the folder.
+The **121** unit tests (44 generator + 77 Asaro) do not need Krita, Qt or PyQt5. The
+UI/docker needs Krita; load it with `Tools → Scripts → Import Python Plugins` or by copying
+the folder.
 
 Repository layout:
 
@@ -206,15 +225,23 @@ release/                installable ZIP
 ## Contributing
 
 Contributions are welcome: languages, hair patterns, head presets, features and fixes.
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. The project is
-GPL-3.0-only, so contributions are accepted under the same license.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Code contributions are
+accepted under **GPL-3.0-only**; do not paste third-party mesh data that is not
+CC BY 4.0-compatible (see [LICENSE-ASSETS.md](LICENSE-ASSETS.md)).
 
 ## Credits and license
 
 - Original **Loomis Head Generator**: lm0ss (2025), GPL-3.0.
 - **Loomis Method Head Guide**: Nedeljko Umjetnik (2026).
 - This fork and improvements: **imboolean** (2026).
+- **Asaro head mesh**: design by **John Asaro**; derivative of **Asaro-head** by
+  **ivan4akir** (CC BY 4.0); "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed
+  and not used.
 
-See [CREDITS.md](CREDITS.md) for the full lineage. The project is licensed under
-**GPL-3.0-only**; `euclid.py` is LGPL-2.1. The plugin works offline: no telemetry, no
-network, no accounts.
+See [CREDITS.md](CREDITS.md) for the full lineage. Two licenses apply:
+
+- **Code**: GPL-3.0-only; `euclid.py` is LGPL-2.1 (see [LICENSE](LICENSE)).
+- **Asaro mesh assets**: **CC BY 4.0** with attribution and a modification notice, not
+  relicensed as GPL (see [LICENSE-ASSETS.md](LICENSE-ASSETS.md)).
+
+The plugin works offline: no telemetry, no network, no accounts.

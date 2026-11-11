@@ -15,7 +15,6 @@ from .qt_compat import (
     QColor,
     QColorDialog,
     QComboBox,
-    QDateTime,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -38,6 +37,14 @@ from .qt_compat import (
     exec_dialog,
     uic,
 )
+from . import qt_compat
+
+# ``QPointF`` no se reexporta en qt_compat; se toma del mismo binding para no
+# importar PyQt5/PyQt6 aqui. Si no estuviera, se mapea por traslacion.
+try:
+    QPointF = qt_compat.QtCore.QPointF
+except AttributeError:  # pragma: no cover - bindings sin QtCore expuesto
+    QPointF = None
 
 from . import i18n
 from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
@@ -53,17 +60,112 @@ from .linalg import (
 )
 from .loomis_head_generator import LoomisHead3D
 
+# Nombre del marcador invisible que fija el pivote en el documento. El id del
+# SVG se conserva como nombre de shape en Krita; si el binding no lo hiciera,
+# el marcador se reconoce por la referencia que devuelve addShapesFromSvg (es
+# el ultimo elemento del SVG y una caja de 1 px).
+PIVOT_SHAPE_NAME = "loomis-pivot"
+# Debounce del canvas: solo se redibuja al parar (500 ms sin cambios). La
+# preview del docker sigue en vivo en cada ``valueChanged``.
+REDRAW_INTERVAL_MS = 500
+
+
+def _map_shape_point(shape, x: float, y: float):
+    """Punto ``(x, y)`` del shape en coordenadas del documento.
+
+    Usa ``absoluteTransformation()`` (o ``transformation()`` si el binding no
+    la expone) para que el marcador se lea donde el usuario lo dejo aunque la
+    capa se haya movido con Move/Transform.
+    """
+    try:
+        transform = shape.absoluteTransformation()
+    except AttributeError:
+        transform = shape.transformation()
+    if QPointF is not None:
+        point = transform.map(QPointF(x, y))
+        return (float(point.x()), float(point.y()))
+    return (x + transform.dx(), y + transform.dy())
+
+
+def _shape_document_center(shape):
+    """Centro de la caja del shape en coordenadas del documento."""
+    try:
+        box = shape.boundingBox()
+        if box is None or box.isNull():
+            return None
+        center = _map_shape_point(
+            shape, box.x() + box.width() / 2.0, box.y() + box.height() / 2.0
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+    return center
+
+
+def _find_pivot_shape(layer):
+    """Shape del marcador de pivote en la capa, por nombre, o ``None``.
+
+    Al cargar un documento no se adivina por tamano: una capa de una version
+    anterior puede tener trazos diminutos (escala muy baja) que no son el
+    pivote. Sin nombre reconocible se devuelve ``None`` y se espera al primer
+    dibujo, que recrea el marcador.
+    """
+    try:
+        shapes = list(layer.shapes())
+    except (AttributeError, RuntimeError, TypeError):
+        return None
+    for shape in shapes:
+        try:
+            name = str(shape.name() or "").lower()
+        except (AttributeError, RuntimeError, TypeError):
+            continue
+        if PIVOT_SHAPE_NAME in name:
+            return shape
+    return None
+
+
+def _is_pivot_shape(shape) -> bool:
+    """True si el shape parece el marcador: nombre ``loomis-pivot`` o 1 px."""
+    try:
+        if PIVOT_SHAPE_NAME in str(shape.name() or "").lower():
+            return True
+        box = shape.boundingBox()
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+    return box is not None and box.width() <= 3 and box.height() <= 3
+
+
+def _pivot_position(layer, shape=None):
+    """Pivote en el documento leido del marcador, o ``None`` si no hay.
+
+    ``shape`` es la referencia que devolvio ``addShapesFromSvg`` al dibujar
+    (evita depender del nombre que Krita ponga al shape); si falta o ya no es
+    valida se busca el marcador en la capa.
+    """
+    if layer is None:
+        return None
+    if shape is not None and _is_pivot_shape(shape):
+        point = _shape_document_center(shape)
+        if point is not None:
+            return point
+    found = _find_pivot_shape(layer)
+    if found is None:
+        return None
+    return _shape_document_center(found)
+
 
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
-    __slots__ = ("model", "layer", "name", "last_center", "model_states")
+    __slots__ = ("model", "layer", "name", "last_center", "model_states", "pivot_shape")
 
     def __init__(self, model, layer, name):
         self.model = model
         self.layer = layer
         self.name = name
         self.last_center = None
+        # Shape del marcador de pivote que devolvio addShapesFromSvg en el
+        # ultimo dibujo de esta guia (None hasta el primer dibujo).
+        self.pivot_shape = None
         # Estado completo por modelo (``to_dict``), para que cambiar de Loomis
         # a Asaro y volver no pierda los campos propios de cada uno.
         self.model_states = {}
@@ -93,8 +195,13 @@ class LoomisProportionsDocker(DockWidget):
         self._state = self._load_guides_state()
         self.update_scheduled = False
         self._last_layer_bounds_center = None
+        # Ultima posicion absoluta del marcador de pivote: la referencia para
+        # medir el desplazamiento manual del lienzo (1:1, sin bounds).
+        self._last_pivot_position = None
+        # Shape del marcador devuelto por addShapesFromSvg (se rehace en cada
+        # dibujo; None equivale a "buscarlo por nombre o por caja").
+        self._pivot_shape = None
         self._drawing = False
-        self._ignore_position_sync_until = 0
         self._pending_position = None
         self._presets = {"version": 1, "presets": {}, "characters": {}}
         self._presets_path = self._preset_path()
@@ -132,19 +239,20 @@ class LoomisProportionsDocker(DockWidget):
         self._log_init("init:ok")
 
         # Krita does not expose a dependable cross-tool signal for every vector
-        # shape move/transform, so watch the vector layer bounds for translation.
+        # shape move/transform, so poll the pivot marker (docs: 1:1, no bounds).
         self.position_sync_timer = QTimer(self)
         self.position_sync_timer.setInterval(120)
         self.position_sync_timer.timeout.connect(self.sync_manual_position)
         self.position_sync_timer.start()
 
-        # Coalesce slider drags into one redraw every 220 ms. Krita 5.3.4 does
-        # not expose beginUndo/endUndo (nor KUndo2Command) to Python, so every
-        # addShapesFromSvg lands in the undo history on its own; spacing the
-        # redraws is the only mitigation available from the plugin side.
+        # El canvas solo se redibuja al parar: 500 ms sin cambios. Krita 5.3.4
+        # no expone beginUndo/endUndo (ni KUndo2Command) a Python, asi que cada
+        # addShapesFromSvg deja su propia entrada de undo; espaciar los
+        # redibujos es la unica mitigacion desde el plugin. La preview del
+        # docker (trackball) se repinta en vivo en cada cambio.
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
-        self._redraw_timer.setInterval(220)
+        self._redraw_timer.setInterval(REDRAW_INTERVAL_MS)
         self._redraw_timer.timeout.connect(self.draw_lines_with_vectors)
 
         self._state_timer = QTimer(self)
@@ -254,6 +362,7 @@ class LoomisProportionsDocker(DockWidget):
             return None
 
     def _apply_state_position(self, model, doc, state: dict) -> None:
+        """Posicion normalizada del estado -> posicion del pivote en pixeles."""
         if state.get("positionUnit") != "normalized":
             return
         try:
@@ -390,27 +499,32 @@ class LoomisProportionsDocker(DockWidget):
                     center = (doc.width() / 2.0, doc.height() / 2.0)
                 model.set_position_x(center[0])
                 model.set_position_y(center[1])
+            # El marcador de pivote manda: si la capa lo trae, la posicion real
+            # del pivote es la del dibujo. No se recalcula por bounds (el centro
+            # del bbox depende de la rotacion y hacia derivar la cabeza).
+            marker = _find_pivot_shape(layer)
+            pivot = _pivot_position(layer, marker)
+            if pivot is not None:
+                model.set_position_x(pivot[0])
+                model.set_position_y(pivot[1])
             current = self._center_from_layer(layer)
-            saved_center = centers.get(name)
-            saved_x = saved_y = None
-            if isinstance(saved_center, (list, tuple)) and len(saved_center) == 2:
-                try:
-                    saved_x = float(saved_center[0]) * doc.width()
-                    saved_y = float(saved_center[1]) * doc.height()
-                except (TypeError, ValueError):
-                    saved_x = saved_y = None
-            if current is not None:
-                if saved_x is not None and saved_y is not None:
-                    dx = current[0] - saved_x
-                    dy = current[1] - saved_y
-                    if abs(dx) >= 0.5 or abs(dy) >= 0.5:
-                        model.set_position_x(model.position_x + dx)
-                        model.set_position_y(model.position_y + dy)
-                guide_center = current
-            else:
-                guide_center = (saved_x, saved_y) if saved_x is not None else None
+            guide_center = current
+            if guide_center is None:
+                saved_center = centers.get(name)
+                if (
+                    isinstance(saved_center, (list, tuple))
+                    and len(saved_center) == 2
+                ):
+                    try:
+                        guide_center = (
+                            float(saved_center[0]) * doc.width(),
+                            float(saved_center[1]) * doc.height(),
+                        )
+                    except (TypeError, ValueError):
+                        guide_center = None
             guide = Guide(model, layer, name)
             guide.last_center = guide_center
+            guide.pivot_shape = marker
             guide.model_states = model_states.get(name) or {}
             self.guides.append(guide)
 
@@ -450,19 +564,22 @@ class LoomisProportionsDocker(DockWidget):
     def _set_active_guide(self, index: int) -> None:
         if not 0 <= index < len(self.guides):
             return
+        # Si hay un dibujo pendiente (el usuario acaba de mover un control),
+        # se vuelca antes de cambiar: el marcador del pivote tiene que reflejar
+        # la posicion del modelo, no la del dibujo anterior.
+        if self.update_scheduled:
+            self._redraw_now()
         self.active_index = index
         guide = self.guides[index]
-        # Si la capa se movio mientras esta guia estaba inactiva, aplicar el delta
-        # al modelo antes de redibujar; asi no vuelve a su posicion original.
-        current = self._center_from_layer(guide.layer)
-        if current is not None:
-            if guide.last_center is not None:
-                dx = current[0] - guide.last_center[0]
-                dy = current[1] - guide.last_center[1]
-                if abs(dx) >= 0.5 or abs(dy) >= 0.5:
-                    guide.model.set_position_x(guide.model.position_x + dx)
-                    guide.model.set_position_y(guide.model.position_y + dy)
-            guide.last_center = current
+        # Si la capa se movio mientras esta guia estaba inactiva, el marcador
+        # del pivote lo refleja: se adopta su posicion exacta, sin bounds.
+        self._pivot_shape = guide.pivot_shape
+        pivot = _pivot_position(guide.layer, self._pivot_shape)
+        if pivot is not None:
+            guide.model.set_position_x(pivot[0])
+            guide.model.set_position_y(pivot[1])
+        self._last_pivot_position = pivot
+        self._remember_center(self._center_from_layer(guide.layer))
         self.loomis_head = guide.model
         self.loomis_layer = guide.layer
         self._last_layer_bounds_center = guide.last_center
@@ -551,6 +668,10 @@ class LoomisProportionsDocker(DockWidget):
                 continue
             data = guide.model.to_dict()
             if width and height:
+                # positionX/Y es la posicion del pivote del modelo (Loomis:
+                # centro de la esfera; Asaro: centro del craneo), no el origen
+                # de la malla: al cambiar de modelo o de tamano de lienzo no
+                # hay conversion, el pivote sigue en el mismo sitio.
                 data["positionX"] = guide.model.position_x / width
                 data["positionY"] = guide.model.position_y / height
                 data["positionUnit"] = "normalized"
@@ -1239,16 +1360,12 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.presetStatus.setText(t("status.model_switched", model=t("model." + model_id)))
 
     def schedule_update(self):
+        # Preview en vivo: el repintado 3D no espera al debounce del canvas.
         self.trackball.update()
-        # A redraw can change the layer's bounding-box center even when the
-        # guide has not translated (notably during rotation). Briefly suppress
-        # bounds-based position syncing while the new geometry settles.
-        self._ignore_position_sync_until = QDateTime.currentMSecsSinceEpoch() + 350
         if hasattr(self, "_state_timer"):
             self._state_timer.start()
-        if self.update_scheduled:
-            return
-
+        # Cada cambio reinicia el debounce: el canvas se redibuja 500 ms
+        # despues del ULTIMO cambio (no durante el arrastre).
         self.update_scheduled = True
         self._redraw_timer.start()
 
@@ -1268,28 +1385,32 @@ class LoomisProportionsDocker(DockWidget):
             return None
 
     def sync_manual_position(self):
-        """Mirror manual translation from Krita's Move/Transform tools into X/Y."""
+        """Mueve X/Y con el lienzo segun el marcador del pivote (1:1).
+
+        El marcador ``loomis-pivot`` se desplaza con la capa cuando el usuario
+        usa Move/Transform. El delta que se lee aqui se suma **una sola vez** a
+        ``position_x/position_y`` (que son la posicion del pivote) y se toma el
+        marcador como nueva referencia, asi que no hay division por 2 ni
+        conversion por bounds: mover el lienzo +100 px mueve X/Y +100 px.
+
+        Si la capa no trae marcador (version anterior, o documento recien
+        cargado antes del primer draw) no se sincroniza nada: la posicion se
+        resuelve al redibujar, que recrea el marcador.
+        """
         if (not self.doc or not self.loomis_layer or not self.loomis_head
-                or self.update_scheduled or self._drawing):
+                or self._drawing):
             return
 
-        center = self._layer_bounds_center()
-        if center is None:
+        pivot = _pivot_position(self.loomis_layer, self._pivot_shape)
+        if pivot is None:
             return
-        now = QDateTime.currentMSecsSinceEpoch()
-        if now < self._ignore_position_sync_until:
-            # Refresh the baseline during control-driven geometry changes so
-            # their altered bounds are not mistaken for manual translation.
-            self._remember_center(center)
-            return
-        if self._last_layer_bounds_center is None:
-            self._remember_center(center)
+        if self._last_pivot_position is None:
+            self._last_pivot_position = pivot
             return
 
-        dx = center[0] - self._last_layer_bounds_center[0]
-        dy = center[1] - self._last_layer_bounds_center[1]
-        # Ignore sub-pixel/rounding noise; real Move/Transform translations are
-        # reflected as a change in the layer's document-space bounds.
+        dx = pivot[0] - self._last_pivot_position[0]
+        dy = pivot[1] - self._last_pivot_position[1]
+        # Ignora ruido subpixel del redondeo de la caja del marcador.
         if abs(dx) < 0.5 and abs(dy) < 0.5:
             return
 
@@ -1303,7 +1424,8 @@ class LoomisProportionsDocker(DockWidget):
         self._sync_transform_sliders()
         # Do not redraw here: allow Krita's active tool to finish moving the
         # existing shapes. The next Loomis control change uses the synced X/Y.
-        self._remember_center(center)
+        self._last_pivot_position = pivot
+        self._remember_center(self._layer_bounds_center())
         if hasattr(self, "_state_timer"):
             self._state_timer.start()
 
@@ -1317,9 +1439,9 @@ class LoomisProportionsDocker(DockWidget):
     # Limitation: Krita 5.3.4's krita.pyi exposes neither beginUndo/endUndo nor
     # KUndo2Command, so the plugin cannot open an undo macro around this call.
     # Each redraw (shape.remove + addShapesFromSvg) therefore leaves its own
-    # entries in the undo history. Mitigation only: space the redraws out
-    # (220 ms debounce, immediate flush on sliderReleased). Grouping them into a
-    # single undo step needs C++ (or a layer swap Krita groups, which would break
+    # entries in the undo history. Mitigation only: redraw 500 ms after the last
+    # change, immediate flush on sliderReleased. Grouping them into a single
+    # undo step needs C++ (or a layer swap Krita groups, which would break
     # Guide.layer/guides.json) and stays as debt.
     def draw_lines_with_vectors(self, samples: int = 512):
         if not self.doc:
@@ -1338,20 +1460,56 @@ class LoomisProportionsDocker(DockWidget):
                 dash_back="8,8",
                 samples=samples,
             )
+            svg = self._with_pivot_marker(svg)
 
             for shape in self.loomis_layer.shapes():
                 shape.remove()
 
-            self.loomis_layer.addShapesFromSvg(svg)
+            # ``addShapesFromSvg`` devuelve los shapes creados en orden de
+            # documento; el marcador es el ultimo elemento del SVG. Guardar esa
+            # referencia evita depender del nombre que Krita le asigne.
+            try:
+                added = list(self.loomis_layer.addShapesFromSvg(svg) or [])
+            except (AttributeError, RuntimeError, TypeError):
+                added = []
+            self._pivot_shape = next(
+                (shape for shape in reversed(added) if _is_pivot_shape(shape)), None
+            )
+            # El marcador recien creado es la nueva referencia de posicion: se
+            # lee su centro en el documento (no el bbox de la capa, que cambia
+            # al rotar) para que el siguiente movimiento manual sea 1:1.
+            self._last_pivot_position = _pivot_position(self.loomis_layer, self._pivot_shape)
             self._last_layer_bounds_center = self._layer_bounds_center()
             guide = self.active_guide()
             if guide is not None:
                 guide.last_center = self._last_layer_bounds_center
+                guide.pivot_shape = self._pivot_shape
         except (AttributeError, RuntimeError, TypeError):
+            self._last_pivot_position = None
+            self._pivot_shape = None
             self.ensure_guide()
         finally:
             self._drawing = False
             self.update_scheduled = False
+
+    def _with_pivot_marker(self, svg: str) -> str:
+        """Anade al SVG el marcador invisible del pivote (1 px, id fijo).
+
+        El pivote es ``position_x/position_y`` en el documento, asi que el
+        marcador se dibuja ahi mismo. No cambia el render: sin relleno visible
+        ni trazo (``fill-opacity=0``), y su caja de 1 px queda dentro de la
+        cabeza. Se usa para leer la posicion real cuando el usuario mueve la
+        capa con Move/Transform.
+        """
+        if self.loomis_head is None or not svg.endswith("</svg>"):
+            return svg
+        x = self.loomis_head.position_x
+        y = self.loomis_head.position_y
+        marker = (
+            f'<circle id="{PIVOT_SHAPE_NAME}" cx="{x:.3f}" cy="{y:.3f}" r="0.5" '
+            'fill="#000000" fill-opacity="0" stroke="none"/>'
+        )
+        return svg[:-6] + marker + "</svg>"
 
     def reset_view(self):
         # Reset rotation only; leave the scale slider and current scale untouched.

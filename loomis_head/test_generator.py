@@ -547,5 +547,64 @@ class GeneratorTests(unittest.TestCase):
                 self.assertNotIn("inf", svg.lower())
 
 
+class PivotTests(unittest.TestCase):
+    """El pivote Loomis es el centro de la esfera: ``pivot_local`` = origen."""
+
+    def test_pivot_local_is_the_origin(self):
+        head = LoomisHead3D()
+        self.assertEqual(
+            (head.pivot_local.x, head.pivot_local.y, head.pivot_local.z),
+            (0.0, 0.0, 0.0),
+        )
+        self.assertEqual(head.pivot_local, Vector3(0.0, 0.0, 0.0))
+
+    def test_pivot_projects_to_position_x_y(self):
+        head = LoomisHead3D()
+        head.set_scale(0.8)
+        rotations = (
+            q_axis_angle([0.0, 1.0, 0.0], 0.0),
+            q_axis_angle([0.2, 1.0, -0.4], 1.3),
+        )
+        for x, y in ((0.0, 0.0), (510.0, 289.0)):
+            head.set_position_x(x)
+            head.set_position_y(y)
+            for q in rotations:
+                head.set_quaternion(q)
+                point = head._to_screen(
+                    head._to_camera([Vector3(0.0, 0.0, 0.0)]), 800.0, 640.0
+                )[0]
+                self.assertAlmostEqual(point.x, x, places=6)
+                self.assertAlmostEqual(point.y, y, places=6)
+
+    def test_sex_and_cranium_changes_keep_the_pivot(self):
+        head = LoomisHead3D()
+        head.set_position_x(400.0)
+        head.set_position_y(320.0)
+        seen = []
+        for sex in (0, 1):
+            for cranium in (0.6, 1.0, 1.6):
+                for width in (0.8, 1.2):
+                    head.set_head_sex(sex)
+                    head.set_cranium(cranium)
+                    head.set_cranium_width(width)
+                    point = head._to_screen(
+                        head._to_camera([Vector3(0.0, 0.0, 0.0)]), 800.0, 640.0
+                    )[0]
+                    seen.append((round(point.x, 6), round(point.y, 6)))
+                    self.assertEqual((head.position_x, head.position_y), (400.0, 320.0))
+        self.assertEqual(len(set(seen)), 1)
+
+    def test_rotation_around_pivot_keeps_the_head_centered(self):
+        """El centro del craneo no se desplaza al rotar (sin deriva por bounds)."""
+        head = LoomisHead3D()
+        head.set_position_x(500.0)
+        head.set_position_y(400.0)
+        first = head._to_screen(head._to_camera([Vector3(0.0, 0.0, 0.0)]), 900.0, 900.0)[0]
+        head.set_quaternion(q_axis_angle([1.0, 0.0, 0.0], 0.7))
+        second = head._to_screen(head._to_camera([Vector3(0.0, 0.0, 0.0)]), 900.0, 900.0)[0]
+        self.assertAlmostEqual(first.x, second.x, places=6)
+        self.assertAlmostEqual(first.y, second.y, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

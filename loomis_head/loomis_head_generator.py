@@ -38,10 +38,16 @@ from .linalg import (
 
 
 class LoomisHead3D:
+    # Pivote en coordenadas de la malla: el centro de la esfera craneal es el
+    # origen, asi que position_x/position_y ya es la posicion del pivote.
+    # Asaro declara aqui su propio pivote (centro del craneo entre orejas/ojos).
+    pivot_local = Vector3(0.0, 0.0, 0.0)
+
     def __init__(self) -> None:
         self.radius: float = 1.0
         self.scale: float = 1.0
-        # Absolute document-pixel coordinates for the head's center.
+        # Absolute document-pixel coordinates for the head's PIVOT (the center
+        # of the cranium sphere; Loomis pivot_local is the origin).
         self.position_x: float = 0.0
         self.position_y: float = 0.0
         self.side_cut: float = 0.66

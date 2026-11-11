@@ -1,11 +1,13 @@
 # SPDX-FileCopyrightText: 2026 imboolean
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Cabeza Asaro: malla decimada del busto real, sin luz ni sombra.
+"""Cabeza Asaro: retopo de planos del busto real, sin luz ni sombra.
 
-La malla no se dibuja a mano: es una decimacion del ``Asaro_high.obj`` (el
-busto de planos de John Asaro con cuello y peana) que vive como datos estaticos
-en :mod:`loomis_head.asaro_mesh`. Este modulo solo la proyecta:
+La malla no se dibuja a mano: es un retopo de planos sobre la silueta del
+``Asaro_high.obj`` (el busto de John Asaro con cuello y peana) que vive como
+datos estaticos en :mod:`loomis_head.asaro_clean_mesh`. La decimacion exacta
+del OBJ sigue en :mod:`loomis_head.asaro_mesh` como referencia para los tests y
+las comparaciones, pero no se dibuja. Este modulo solo proyecta la malla:
 
 * ``detail`` 0/1/2 elige el nivel de la malla (grueso, medio, fino);
 * ``show_neck`` mete o quita el cuello y la peana; sin ellos la cabeza se
@@ -16,7 +18,13 @@ en :mod:`loomis_head.asaro_mesh`. Este modulo solo la proyecta:
 
 Ejes del modelo: ``y`` arriba, ``z`` hacia delante (la cara mira a ``+z``),
 ``x`` lateral. Alto 1.5, ancho oreja a oreja ~0.8, fondo nariz-occipucio ~1.0.
-El menton queda en ``asaro_mesh.NECK_Y``; por debajo empieza el cuello.
+El menton queda en ``asaro_clean_mesh.NECK_Y``; por debajo empieza el cuello.
+
+Pivote: ``position_x/position_y`` es donde cae el **pivote** de la cabeza (el
+centro del craneo entre orejas y ojos, :data:`asaro_clean_mesh.PIVOT_LOCAL`),
+no el origen de la malla. Antes de rotar se resta ``pivot_local`` a cada
+vertice, de modo que girar no desplaza la cabeza y la posicion del documento
+no deriva. Loomis usa el mismo contrato con pivote ``(0, 0, 0)``.
 
 ``shade_planes`` no simula luz: clasifica cada cara por el azimut de su normal
 respecto al frente del modelo y le da un tono plano (frontal, frontal-lateral,
@@ -26,15 +34,19 @@ La interfaz es la de :class:`LoomisHead3D` (escala, posicion, quaternion,
 trazos, colores de zona y ``to_dict``/``from_dict``) para que el panel, la capa
 vectorial y los presets funcionen sin cambios.
 
-Licencia: la malla es un derivado de un OBJ descargado; para uso local vale,
-pero antes de publicar hay que revisar los derechos del original y acreditar a
-John Asaro (ver ``CREDITS.md``).
+Licencia: el codigo es GPL-3.0-only; la malla va aparte, bajo **CC BY 4.0**. Es
+un derivado (decimado y retopologizado) de "Asaro-head" de **ivan4akir**
+(CC BY 4.0), cuyo diseno es de **John Asaro**; "Simple Asaro Head" de
+**fabianoaraujo** (CC BY 4.0) se reviso y no se uso. La atribucion y el aviso de
+modificacion acompanan a la malla (ver ``LICENSE-ASSETS.md`` y
+``CREDITS.md``). Esta version 0.7.4 es **local**: no se publica ZIP ni patch
+hasta validarla en Krita.
 """
 
 import math
 from collections.abc import Sequence
 
-from . import asaro_mesh
+from . import asaro_clean_mesh
 from .euclid import Vector2, Vector3
 from .geom_polyline import path_str
 from .linalg import Quaternion, q_identity, q_normalize
@@ -122,6 +134,9 @@ class AsaroHead:
     """Cabeza Asaro con la interfaz del generador Loomis."""
 
     model_id = "asaro"
+    # Pivote en coordenadas de la malla limpia: centro del craneo (no el bbox
+    # del busto, que incluye cuello y peana). Ver asaro_clean_mesh.PIVOT_LOCAL.
+    pivot_local = Vector3(*asaro_clean_mesh.PIVOT_LOCAL)
 
     def __init__(self) -> None:
         self.radius: float = 1.0
@@ -196,7 +211,7 @@ class AsaroHead:
             level = int(round(float(detail)))
         except (TypeError, ValueError):
             level = 1
-        self.detail = max(0, min(asaro_mesh.LEVEL_COUNT - 1, level))
+        self.detail = max(0, min(asaro_clean_mesh.LEVEL_COUNT - 1, level))
 
     # --- compatibilidad Loomis (sin efecto en la malla) -------------------
     def set_sidecut(self, side_cut: float) -> None:
@@ -300,7 +315,7 @@ class AsaroHead:
     # --- malla ------------------------------------------------------------
     def _level(self) -> dict:
         """Nivel de la malla para el detalle actual."""
-        return asaro_mesh.get_level(self.detail)
+        return asaro_clean_mesh.get_level(self.detail)
 
     def _vertices(self) -> tuple[tuple[float, float, float], ...]:
         return self._level()["verts"]
@@ -400,8 +415,15 @@ class AsaroHead:
         return [(a, b) for a, b, _kind in self._edge_kinds(faces)]
 
     def _to_camera(self, point: tuple[float, float, float]) -> Vector3:
+        """Vertice en espacio de camara, con el pivote en el origen.
+
+        Restar ``pivot_local`` antes de rotar es lo que hace que
+        ``position_x/position_y`` sea la posicion del pivote: el pivote se
+        proyecta exactamente ahi con cualquier rotacion.
+        """
+        pivot = self.pivot_local
         x, y, z = point
-        return self.q * Vector3(x, y, z)
+        return self.q * Vector3(x - pivot.x, y - pivot.y, z - pivot.z)
 
     def _to_screen(self, point: Vector3, s: float) -> Vector2:
         return Vector2(point.x * s + self.position_x, self.position_y - point.y * s)

@@ -179,3 +179,51 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
   local use: **do not redistribute the ZIP or the patch until the model licence is cleared
   and John Asaro is credited**. `release/` keeps the 0.7.2 artifacts; there is no 0.7.3 ZIP
   or patch.
+
+## 0.7.4 — 2026-11-11
+
+- **Clean retopo v2, hand-built** (`asaro_clean_mesh.py`): the 0.7.3 decimation is replaced
+  by a hand retopology over the silhouette of `Asaro_high.obj`, measured in the same frame
+  (+90° Y, centred, height 1.5). Each row is a flow line with its own height per column
+  instead of a stacked ring, so the planes follow the anatomy: **122 / 242 / 272 faces** at
+  detail 0 / 1 / 2 (head + neck and base), with 131 / 257 / 289 vertices. `asaro_mesh.py`
+  stays as the decimated reference for tests and comparisons; it is no longer drawn.
+- **Mouth band**: three rows on the front (lower lip, sunken centre line, upper lip) open
+  towards the cheek and the occiput, so the lips read in the front and the profile without
+  filling the face with rings.
+- **Ear with concha**: the helix at 116° stands out, the concha at 124° sinks and the
+  antihelix at 140° rises again; the ear is a four-face hollow with a rim, not a wedge.
+  **Banding** (columns at intermediate angles) adds the temple, cheekbone, orbital and
+  mastoid planes, and the mesh stays closed (every internal edge shared by two faces).
+- **Invisible pivot at the centre of the skull**: `LoomisHead3D.pivot_local` is the sphere
+  centre `(0, 0, 0)`; `AsaroHead.pivot_local` is the area centroid of the head faces
+  (neck and base excluded) of the finest level, `(0.0, 0.2852, -0.0354)`, so the pivot is
+  not the bust bbox centre and does not jump between detail levels. `position_x/y` now means
+  **the pivot position in the document**: `build_svg` subtracts `pivot_local` before
+  rotating and projecting, so rotating or switching model/type/sex keeps the pivot where it
+  is. The JSON schema is unchanged; only the semantics are documented.
+- **Pivot marker `loomis-pivot`**: an invisible `<circle>` (1 px, no stroke, opacity 0) is
+  added after the head SVG inside the layer, so it does not change the render or the visible
+  bounds. `sync_manual_position` reads the marker's absolute position instead of the layer
+  bounds centre; a manual canvas move adds its delta **once** to `position_x/y` and updates
+  the spinboxes without redrawing. Without a marker (legacy load) it waits for the next draw
+  instead of drifting with the bounds.
+- **1:1 movement**: the marker delta is applied exactly to `position_x/y` (no factor of 2,
+  no bounds). Move the canvas +100 px → X/Y +100; then the docker +50 px → X/Y +150 and the
+  head lands at +150.
+- **Redraw when you stop**: the canvas debounce is now **500 ms** (single shot) and every
+  slider/spin/rotation change restarts it; the docker preview (`trackball.update()`) still
+  runs live. `valueChanged` no longer redraws the canvas; `sliderReleased` can flush
+  immediately.
+- **Tests**: **121** unit tests (44 generator + 77 Asaro), plus the offscreen docker check
+  (`test_dashboard_070.py`) and the `check_neck_ui.py`, `check_shade_planes_ui.py` and
+  `check_pivot_marker.py` checks, all passing. What is not covered without a real Krita
+  document: the marker under undo and a real canvas Move.
+- **License — Asaro meshes CC BY 4.0**: the code stays **GPL-3.0-only**; the meshes are
+  **CC BY 4.0** with attribution and a modification notice — derivative of "Asaro-head" by
+  **ivan4akir** (CC BY 4.0), design by **John Asaro**; "Simple Asaro Head" by
+  **fabianoaraujo** (CC BY 4.0) reviewed and not used. See `LICENSE-ASSETS.md` and
+  `CREDITS.md`.
+- **Warning — local build**: 0.7.4 is **local only**. There is **no 0.7.4 ZIP or patch**;
+  the public ZIP ships only after validating this build in Krita. `release/` still holds
+  the **0.7.2** artifacts, which remain the last public build.

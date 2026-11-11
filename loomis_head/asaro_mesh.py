@@ -34,9 +34,23 @@ sentido antihorario visto desde fuera; primero cabeza y despues cuello),
 ``head_faces`` (cuantas de las primeras son cabeza), ``cap`` (triangulos del
 tapon cuando se oculta el cuello) y ``bbox``.
 
-Licencia: el OBJ de origen es un modelo descargado; esta malla es un derivado.
-Para uso local vale, pero antes de publicar el ZIP hay que revisar los derechos
-del scan y acreditar a John Asaro (ver CREDITS.md).
+Atribucion y licencia
+---------------------
+Derivado de "Asaro-head" de **ivan4akir** (Sketchfab, CC BY 4.0), un modelo del
+busto de planos disenado por **John Asaro**. El diseno es de Asaro; el modelo de
+origen y la malla de aqui son derivados suyos.
+
+Modificaciones de este proyecto sobre la malla de origen: reorientacion (+90
+grados en Y), centrado de la caja, escalado a ``HEIGHT``, decimacion por vertex
+clustering con rejilla mas densa en los rasgos, descarte de caras degeneradas,
+duplicadas y astillas, corte de cuello por altura y tapon del borde.
+
+Los datos de malla de este modulo son **CC BY 4.0**
+(https://creativecommons.org/licenses/by/4.0/): al redistribuirlos hay que
+conservar esta atribucion e indicar los cambios. No se relicencian como GPL. El
+codigo del plugin que consume la malla es **GPL-3.0-only** (ver ``LICENSE``);
+texto completo, enlaces y credito listo para copiar en ``LICENSE-ASSETS.md``.
+El OBJ original no se redistribuye.
 """
 
 HEIGHT = 1.5
