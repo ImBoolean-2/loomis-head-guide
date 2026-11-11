@@ -70,14 +70,14 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
   (opacity 0.18–0.28, no directional light) and round-trips as `shadePlanes`; `show_planes`,
   `show_edges` and `detail` (0..2 → level) still change the SVG. `test_asaro.py` locks the
   mesh sizes, the mouth band, the ear concha, the closed mesh, the pivot, `shade_planes`
-  and the round-trip; the suite is 143 tests (66 generator + 77 Asaro), plus
+  and the round-trip; the suite is 153 tests (76 generator + 77 Asaro), plus
   `test_ui_offscreen.py` for the docker.
 - **License**: the code is **GPL-3.0-only**; the Asaro meshes are **CC BY 4.0**, not GPL —
   derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), design by **John Asaro**;
   "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed and not used. Attribution
-  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.9
+  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.10
   is a **local build**: no public ZIP or patch until it is validated in Krita; `release/`
-  keeps the 0.7.2 artifacts, the last public build (0.7.3 to 0.7.9 are local).
+  keeps the 0.7.2 artifacts, the last public build (0.7.3 to 0.7.10 are local).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
@@ -107,49 +107,80 @@ Settings rows are hidden.
   the layer; the manual matrix is then applied to the marker like to any other shape, so its
   absolute centre is the effective X/Y. It does not change the render or the visible bounds,
   and it is recreated at the pivot on every draw.
-- **Capture of the Move/Transform (0.7.8)**: Krita stores a canvas Move/Transform in each
-  shape's `Shape.transformation()`; a vector layer keeps `Node.position()` at 0 and
-  `Node.bounds()` drifts when the layer is rotated, so neither is the source anymore.
-  `_capture_manual_transform()` takes the **most common non-identity** 6-float matrix
-  (`m11, m12, m21, m22, dx, dy`) among the layer's shapes, skips the pivot marker, and
-  returns `None` for a layer with no drawing shape so an empty layer never overwrites a
-  saved transform. The capture runs in `sync_manual_position()` (120 ms timer) **before**
-  the draw and only stores the matrix: it never moves the model.
-- **Reapply (0.7.8)**: `draw_lines_with_vectors()` captures first, removes the old shapes,
-  builds the new SVG at `(position_x, position_y)` and `_apply_manual_transform()` applies
-  the matrix to **every** shape returned by `addShapesFromSvg()`, the marker included, so
-  the marker's absolute centre is already the effective position. The layer transform is
-  **no longer reset** before a redraw (that was the 0.7.7 bug); `_set_shapes_identity()`
-  only runs on the explicit `reset_position`, which also clears `guide.manual_transform`.
-- **Persistence**: each `guides.json` guide entry carries
-  `"transform": [m11, m12, m21, m22, dx, dy]` (missing → identity for older documents),
-  restored into `guide.manual_transform`; presets and the head state carry
-  `layerTransform` in the same block as the model, so loading a preset re-applies the Move
-  to the current shapes. The field is opaque to the Grimoire of Color and to older
-  versions. If a reopened document has a saved transform but every shape is still at
-  identity, `_transform_pending_apply` (0.7.9, review finding C) keeps it: the 120 ms poll
-  does not overwrite it with identity and the first draw applies it.
-- **X/Y is the effective position (0.7.9)**: the docker shows `M·p + t` — the model pivot
-  passed through the **full** matrix, not `p + (dx, dy)`. `_visible_position()` is the only
-  reader; `_refresh_visible_position()` writes the value into the sliders/spinboxes without
-  emitting signals, and `_set_visible_position()` solves `p = M_lin⁻¹·(target − t)` (with a
-  `|det| < 1e-6` fallback to pure translation) before `set_position_x/y`, so editing X/Y
-  moves the model and never touches the manual Move. Ignoring the linear part was the
-  0.7.8 review finding A: with a 30° rotation the old formula was off by hundreds of pixels.
+- **Capture of the Move/Transform (0.7.8, base/delta in 0.7.10)**: Krita stores a canvas
+  Move/Transform in each shape's `Shape.transformation()`; a vector layer keeps
+  `Node.position()` at 0 and `Node.bounds()` drifts when the layer is rotated, so neither is
+  the source anymore. That matrix is **not** the user's Move on its own: `addShapesFromSvg()`
+  already leaves the layer's **base** there (0.24 on a 300 ppi canvas, because shape
+  coordinates are layer units, i.e. points, not document pixels) and the tool composes the
+  Move on top of it. 0.7.10 therefore separates both:
+  - `_capture_base_transform()` runs **right after** `addShapesFromSvg()` and before
+    touching any shape; the most common matrix of the freshly added shapes (marker
+    excluded) is the base. It lives in `guide.base_transform` / `_base_transform` and is
+    **not persisted**: every draw recaptures it.
+  - `_capture_manual_transform()` returns the **delta** `current ∘ base⁻¹`
+    (`_compose_transforms` + `_invert_transform`), skipping the pivot marker and returning
+    `None` for a layer with no drawing shape so an empty layer never overwrites a saved
+    delta. It runs in `sync_manual_position()` (120 ms timer) **before** the draw and only
+    stores the matrix: it never moves the model.
+  - With no base captured (document just reopened) `_guess_base_transform()` derives it
+    from the stored shapes' uniform scale, so X/Y is right before the first draw.
+- **Reapply (0.7.8, delta ∘ base in 0.7.10)**: `draw_lines_with_vectors()` captures first,
+  removes the old shapes, builds the new SVG at `(position_x, position_y)` and
+  `_apply_manual_transform()` applies **delta ∘ base once** to **every** shape returned by
+  `addShapesFromSvg()`, the marker included, so the marker's absolute centre is already the
+  effective position. With the delta at identity it does **not** call `setTransformation()`
+  at all: the base the importer wrote already draws correctly. 0.7.9 captured the base as if
+  it were the Move and reapplied it, so the scale was squared (0.24² = 0.0576) and the head
+  came out invisible or reduced to a speck. The layer transform is **no longer reset**
+  before a redraw (that was the 0.7.7 bug); `_set_shapes_to_base()` only runs on the
+  explicit `reset_position` (and on a model change), which also clears
+  `guide.manual_transform`, and it restores the **base**, not identity (identity left the
+  head at scale 1, four times too big).
+- **Persistence (base/delta in 0.7.10)**: each `guides.json` guide entry carries
+  `"transform": [m11, m12, m21, m22, dx, dy]` plus `"transformIsDelta": true` (missing →
+  identity for older documents); the value is the **delta**, restored into
+  `guide.manual_transform`. Presets and the head state carry `layerTransform` in the same
+  block as the model, with the same flag, so loading a preset re-applies the delta to the
+  current shapes. The absolute `transform` / `layerTransform` written by 0.7.8/0.7.9
+  (which included the base) is migrated **once** on load by `_migrate_transform()`:
+  `delta = stored ∘ base⁻¹` (without a captured base it uses the value's own uniform scale,
+  since the importer base has no translation), and the next save writes the flag so it is
+  never migrated twice. The field is opaque to the Grimoire of Color and to older versions.
+  If a reopened document has a saved delta but every shape is still at identity,
+  `_transform_pending_apply` (0.7.9, review finding C) keeps it: the 120 ms poll does not
+  overwrite it with identity and the first draw applies it.
+- **X/Y is the effective position (0.7.9, layer units in 0.7.10)**: `_total_transform()` is
+  the only composer, `delta ∘ base`; `_visible_position()` passes the model pivot through it
+  and divides by the base scale (`_document_scale()` = `1/base`), because the shapes live in
+  layer units (points) and Krita multiplies by `1/0.24` when painting: the docker shows
+  document pixels, the "Position" of the tool. `_refresh_visible_position()` writes the
+  value into the sliders/spinboxes without emitting signals, and `_set_visible_position()`
+  undoes the base and solves `p = M_lin⁻¹·(target/base − t)` (with a `|det| < 1e-6`
+  fallback to pure translation) before `set_position_x/y`, so editing X/Y moves the model
+  and never touches the manual Move. Ignoring the linear part was the 0.7.8 review finding
+  A: with a 30° rotation the old formula was off by hundreds of pixels.
 - **Sync before the draw (0.7.5)**: `draw_lines_with_vectors()` calls `sync_manual_position()`
   **first**, before removing and recreating the shapes. The redraw builds the SVG at
   `(position_x, position_y)`, so without that call touching any docker control would snap a
   manually moved head back to its old X/Y. After the draw the marker and layer references
   are re-read; switching guides takes the new layer as baseline without a delta.
-- **`pivot.log` (0.7.6, `manual`/`reapplied` in 0.7.8)**: every sync that changes the matrix
-  and every draw append one line with a timestamp to `loomis_head/pivot.log` under
-  `QStandardPaths.AppDataLocation` (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log`
-  in the flatpak): a `sync transform` line records `old=`/`new=` (the captured matrix) and
-  the model `pos=`; each `draw` line records `pos=`, `visible=` (effective X/Y),
-  `manual=<6 floats>`, `reapplied=<True|False>`, plus `layer=`, `marker=`, `last_layer=`
-  and `last_marker=`. `init.log` and `setup.log` use the same rotation helper
-  (`_append_log`): each rotates to `<name>.1` past 200 KB and swallows any OS error.
-  Diagnostics only, never a functional path.
+- **`pivot.log` (0.7.6, `manual`/`reapplied` in 0.7.8, `base`/`delta` in 0.7.10)**: every
+  sync that changes the matrix and every draw append one line with a timestamp to
+  `loomis_head/pivot.log` under `QStandardPaths.AppDataLocation`
+  (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` in the flatpak): a
+  `sync delta` line records `old=`/`new=` (the captured delta), `base=` (the layer base) and
+  the model `pos=`; each `draw` line records `pos=`, `visible=` (effective X/Y in document
+  pixels), `base=<6 floats>`, `delta=<6 floats>`, `reapplied=<True|False>`, plus `layer=`,
+  `marker=`, `last_layer=` and `last_marker=`. `init.log` and `setup.log` use the same
+  rotation helper (`_append_log`): each rotates to `<name>.1` past 200 KB and swallows any
+  OS error. Diagnostics only, never a functional path.
+- **History — 0.7.9, superseded by 0.7.10**: 0.7.9 captured the base written by
+  `addShapesFromSvg()` as if it were the Move and reapplied it to every new shape, so the
+  scale was squared (0.24 → 0.0576) and the head came out invisible; it also read X/Y as
+  `M·p + t` without undoing the layer units. Both are fixed at the root in 0.7.10 (base +
+  delta + `1/base`), and the absolute values it saved are migrated to deltas on load.
+  `_set_shapes_identity()` is replaced by `_set_shapes_to_base()`.
 - **History — 0.7.7, superseded by 0.7.8**: `sync_manual_position()` read the marker's
   absolute centre delta and applied it **once** to `position_x/y`, with
   `_layer_position()`/`Node.position()` as the fallback; a `_reset_layer_transform()` ran

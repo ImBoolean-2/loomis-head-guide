@@ -39,7 +39,7 @@ un derivado (decimado y retopologizado) de "Asaro-head" de **ivan4akir**
 (CC BY 4.0), cuyo diseno es de **John Asaro**; "Simple Asaro Head" de
 **fabianoaraujo** (CC BY 4.0) se reviso y no se uso. La atribucion y el aviso de
 modificacion acompanan a la malla (ver ``LICENSE-ASSETS.md`` y
-``CREDITS.md``). Esta version 0.7.9 es **local**: no se publica ZIP ni patch
+``CREDITS.md``). Esta version 0.7.10 es **local**: no se publica ZIP ni patch
 hasta validarla en Krita.
 """
 

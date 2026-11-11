@@ -417,3 +417,58 @@ Fixes de la revisión de 0.7.8. Todo local, sin ZIP ni patch hasta validar en Kr
   generan solo después de validar el build en Krita (Move real, guardar y reabrir el
   `.kra`). `release/` sigue con los artefactos **0.7.2**, la última build pública
   (0.7.3 a 0.7.9 son locales).
+
+## 0.7.10 — 2026-11-11
+
+Corrige la regresión de 0.7.9 con la escala base. Todo local, sin ZIP ni patch hasta
+validar en Krita.
+
+- **Regresión de 0.7.9: la base se trataba como Move**. El importador de SVG
+  (`addShapesFromSvg`) deja en `Shape.transformation()` la escala de la capa (0.24 en un
+  lienzo a 300 ppp). 0.7.9 la capturaba como si fuese el Move/Transform del usuario y la
+  reaplicaba a los shapes nuevos, así que la base se multiplicaba por sí misma
+  (0.24² = 0.0576): la cabeza salía invisible o reducida a una mota en una esquina, y el
+  X/Y del docker se desviaba.
+- **Base + delta**: `_capture_base_transform()` lee la transformación común de los shapes
+  recién añadidos, justo después de `addShapesFromSvg` y antes de tocar nada; esa es la
+  base de la capa (`guide.base_transform`, no se persiste: se vuelve a capturar en cada
+  dibujo). `_capture_manual_transform()` devuelve solo el **delta** (`actual ∘ base⁻¹`) y
+  `_apply_manual_transform()` compone **delta ∘ base** una sola vez; helpers nuevos
+  `_compose_transforms()` e `_invert_transform()`. El marcador del pivote se excluye de la
+  captura (se recrea en cada dibujo).
+- **Delta identidad no toca los shapes**: con el Move a cero no se llama a
+  `setTransformation()`; la base que puso el importador ya dibuja bien. Se deja de
+  reescribir la transformación de cada shape en cada redibujo.
+- **Unidades de capa, no píxeles**: `Shape.transformation()` está en unidades de la capa
+  (puntos), no en píxeles del documento. `_document_scale()` = `1/base` y
+  `_visible_position()` = `total·pivote / base`; al editar X/Y,
+  `_set_visible_position()` deshace la base antes de invertir (`M_lin⁻¹·(target/base − t)`).
+  Con esto el X/Y del docker vuelve a ser el "Position" real y editar X/Y no mueve la
+  cabeza. `_total_transform()` = `delta ∘ base` es el único punto que compone.
+- **Migración de 0.7.8/0.7.9**: `transform` (guía) y `layerTransform` (preset y estado de
+  la cabeza) de esas versiones eran **absolutos** (incluían la base). Al cargar,
+  `_migrate_transform()` los convierte una sola vez con `delta = guardado ∘ base⁻¹`
+  (sin base capturada se deduce del propio valor, porque la base del importador es una
+  escala uniforme sin traslación) y se vuelven a guardar con `"transformIsDelta": true`,
+  de modo que al recargar no se migran dos veces. Los documentos de 0.7.9 no pierden el
+  Move ni encogen la cabeza.
+- **`_set_shapes_to_base()`**: el reset explícito (`reset_position`, cambio de modelo)
+  devuelve los shapes a la **base** del SVG, no a identidad; con identidad la cabeza se
+  quedaba a escala 1 (cuatro veces más grande). Sigue limpiando el delta de la guía.
+- **Reabrir un `.kra`**: sin base capturada en la sesión, `_guess_base_transform()` la
+  deduce de la transformación común de los shapes guardados, así el X/Y es correcto antes
+  del primer dibujo; el primer `draw` la vuelve a capturar del importador.
+- **Log**: la línea `sync` pasa a `sync delta old=… new=… base=…` y la de `draw` a
+  `base=… delta=…` (antes `manual=`); diagnóstico, nunca camino funcional.
+- **Tests**: **153** unit tests (143 + 10 nuevos): base capturada tras el importador y
+  reaplicada sin cuadruplicar la escala, edición de X/Y con base, rotación y cambio de
+  modelo (Loomis → Asaro) conservando el delta sobre la base nueva, migración del absoluto
+  de 0.7.8/0.7.9 una sola vez, no migrar dos veces un delta, base deducida al reabrir,
+  preset con transform absoluto y con delta, y composición/inversa de matrices.
+  `test_ui_offscreen.py` sigue aparte (5 OK en el flatpak).
+- **Docs**: README y `docs/ARCHITECTURE.md` con 153 tests, 0.7.10 local y la semántica
+  base/delta/unidades + migración; 0.7.7–0.7.9 quedan como historia.
+- **Aviso — build local**: 0.7.10 es **solo local**. No hay **ZIP ni patch 0.7.10**; se
+  generan solo después de validar el build en Krita (Move real, rotar, cambiar de modelo,
+  guardar y reabrir el `.kra`). `release/` sigue con los artefactos **0.7.2**, la última
+  build pública (0.7.3 a 0.7.10 son locales).

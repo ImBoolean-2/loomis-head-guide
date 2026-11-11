@@ -344,12 +344,65 @@ def _untransform_point(values, x: float, y: float):
     )
 
 
+def _compose_transforms(outer, inner):
+    """Composicion ``outer ∘ inner`` en 6 floats: ``inner`` se aplica primero.
+
+    El orden importa y es el que usa Krita: la base que pone el importador de
+    SVG convierte las coordenadas del SVG en coordenadas de la capa, y el
+    Move/Transform del usuario se aplica DESPUES, sobre el documento. Por eso
+    ``total = delta ∘ base`` (no al reves: ``base ∘ delta`` solo moveria
+    ``base·delta_t``, y un arrastre de 100 px se quedaria en 24).
+    """
+    a11, a12, a21, a22, adx, ady = _normalize_transform(outer)
+    b11, b12, b21, b22, bdx, bdy = _normalize_transform(inner)
+    return (
+        a11 * b11 + a21 * b12,
+        a12 * b11 + a22 * b12,
+        a11 * b21 + a21 * b22,
+        a12 * b21 + a22 * b22,
+        a11 * bdx + a21 * bdy + adx,
+        a12 * bdx + a22 * bdy + ady,
+    )
+
+
+def _invert_transform(values):
+    """Inversa afin en 6 floats, o ``None`` si la parte lineal es degenerada."""
+    m11, m12, m21, m22, dx, dy = _normalize_transform(values)
+    det = m11 * m22 - m21 * m12
+    if abs(det) < TRANSFORM_EPSILON:
+        return None
+    i11 = m22 / det
+    i12 = -m12 / det
+    i21 = -m21 / det
+    i22 = m11 / det
+    return (i11, i12, i21, i22, -(i11 * dx + i21 * dy), -(i12 * dx + i22 * dy))
+
+
+def _guess_base_transform(values):
+    """Base supuesta cuando no se capturo la que puso ``addShapesFromSvg``.
+
+    La base del importador es una escala uniforme sin traslacion (en un lienzo
+    a 300 ppp, 72/300 = 0.24). Sin ella guardada, la unica parte recuperable de
+    la transformacion de un shape es su escala: si la parte lineal no tiene
+    rotacion se conserva tal cual (Move puro), y si la tiene se queda solo la
+    escala uniforme, para que el delta de una rotacion manual no se pierda.
+    """
+    m11, m12, m21, m22, _dx, _dy = _normalize_transform(values)
+    det = m11 * m22 - m21 * m12
+    scale = math.sqrt(abs(det))
+    if scale <= TRANSFORM_EPSILON:
+        return IDENTITY_TRANSFORM
+    if abs(m12) <= SAME_TRANSFORM_EPSILON and abs(m21) <= SAME_TRANSFORM_EPSILON:
+        return (m11, m12, m21, m22, 0.0, 0.0)
+    return (scale, 0.0, 0.0, scale, 0.0, 0.0)
+
+
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
     __slots__ = (
         "model", "layer", "name", "last_center", "model_states", "pivot_shape",
-        "manual_transform",
+        "manual_transform", "base_transform",
     )
 
     def __init__(self, model, layer, name):
@@ -363,10 +416,14 @@ class Guide:
         # Estado completo por modelo (``to_dict``), para que cambiar de Loomis
         # a Asaro y volver no pierda los campos propios de cada uno.
         self.model_states = {}
-        # Move/Transform manual del usuario, capturado de la transformacion de
-        # los shapes. Es independiente del pivote: el X/Y visible es
-        # ``model.position + dx/dy`` y el pivote del modelo sigue intacto.
+        # Move/Transform manual del usuario, ya como DELTA respecto a la base
+        # del importador de SVG. Es independiente del pivote: el X/Y visible es
+        # ``delta·base·pivote`` (``delta`` aplicado despues de la base).
         self.manual_transform = IDENTITY_TRANSFORM
+        # Base que ``addShapesFromSvg`` puso a los shapes de ESTA capa en el
+        # ultimo dibujo (p. ej. 0.24). No se persiste: se vuelve a capturar en
+        # cada dibujo.
+        self.base_transform = None
 
 
 class LoomisProportionsDocker(DockWidget):
@@ -393,10 +450,14 @@ class LoomisProportionsDocker(DockWidget):
         self._state = self._load_guides_state()
         self.update_scheduled = False
         self._last_layer_bounds_center = None
-        # Move/Transform manual de la guia activa (m11,m12,m21,m22,dx,dy).
-        # Krita lo guarda en la transformacion de los shapes; el modelo no se
-        # mueve. El X/Y visible del docker es ``M·pivote + t``.
+        # Move/Transform manual de la guia activa (m11,m12,m21,m22,dx,dy),
+        # como DELTA respecto a la base que pone el importador de SVG. Krita
+        # lo guarda en la transformacion de los shapes; el modelo no se mueve.
+        # El X/Y visible del docker es ``delta·base·pivote``.
         self._manual_transform = IDENTITY_TRANSFORM
+        # Base del SVG de la capa activa (p. ej. 0.24), capturada de los shapes
+        # nuevos en cada dibujo. None = capa sin dibujar en esta sesion.
+        self._base_transform = None
         # True si ``_manual_transform`` viene de guides.json pero la capa
         # todavia esta a identidad (documento recien abierto): el sondeo no
         # debe pisarlo con identidad antes del primer draw, que lo reaplica.
@@ -646,6 +707,8 @@ class LoomisProportionsDocker(DockWidget):
         self._save_doc_state()
 
     def _load_guides(self, doc, saved: dict) -> None:
+        # La base es por capa y se vuelve a capturar en el primer dibujo.
+        self._base_transform = None
         layers = self._find_guide_layers(doc)
         states = {}
         centers = {}
@@ -662,9 +725,13 @@ class LoomisProportionsDocker(DockWidget):
                     name = str(item["name"])
                     states[name] = item.get("state")
                     centers[name] = item.get("center")
-                    # Move/Transform manual guardado con la guia. Si falta
-                    # (documento de una version anterior) se usa la identidad.
-                    transforms[name] = _normalize_transform(item.get("transform"))
+                    # Move/Transform manual guardado con la guia, ya como delta.
+                    # Si falta (documento de una version anterior) se usa la
+                    # identidad; si viene sin ``transformIsDelta`` es absoluto
+                    # (0.7.8/0.7.9, incluia la base) y se migra a delta.
+                    transforms[name] = self._migrate_transform(
+                        item.get("transform"), item.get("transformIsDelta")
+                    )
                     # Estados de los modelos inactivos (el activo esta en
                     # ``state``); si falta o no es dict, la guia arranca vacia.
                     extra = item.get("models")
@@ -794,6 +861,7 @@ class LoomisProportionsDocker(DockWidget):
         model.set_position_x(doc.width() / 2.0)
         model.set_position_y(doc.height() / 2.0)
         self._manual_transform = IDENTITY_TRANSFORM
+        self._base_transform = None
         self.guides.append(Guide(model, layer, name))
         self._set_active_guide(len(self.guides) - 1)
         self._save_doc_state()
@@ -820,12 +888,22 @@ class LoomisProportionsDocker(DockWidget):
             self._redraw_now()
         self.active_index = index
         guide = self.guides[index]
-        # Move/Transform de esta guia: se toma lo guardado y, si la capa ya
-        # tiene shapes (el usuario pudo moverla desde el docker de capas), se
-        # recaptura de su transformacion. El modelo no se toca: el pivote
-        # guardado es el logico y el manual es el offset de la herramienta.
+        # Move/Transform de esta guia: se toma el delta guardado y, si la capa
+        # ya tiene shapes, se recaptura de su transformacion (quitando la base
+        # que el importador puso a esos shapes). El modelo no se toca: el
+        # pivote guardado es el logico y el delta es el offset de la
+        # herramienta.
         self._pivot_shape = guide.pivot_shape
+        self._base_transform = guide.base_transform
         self._manual_transform = _normalize_transform(guide.manual_transform)
+        if self._base_transform is None:
+            # Documento recien abierto: la base aun no se capturo, pero los
+            # shapes guardados ya la traen. Se deduce de su escala para que el
+            # X/Y del docker sea el correcto antes del primer dibujo (el primer
+            # draw la vuelve a capturar del importador).
+            common = self._common_shape_transform(guide.layer)
+            if common is not None and not _is_identity_transform(common):
+                self._base_transform = _guess_base_transform(common)
         captured = self._capture_manual_transform(guide.layer)
         if captured is not None and not _is_identity_transform(captured):
             # La capa tiene un Move/Transform real: el canvas manda.
@@ -943,13 +1021,15 @@ class LoomisProportionsDocker(DockWidget):
                 data["positionY"] = guide.model.position_y / height
                 data["positionUnit"] = "normalized"
             entry = {"name": guide.name, "state": data}
-            # Move/Transform manual de la guia (6 floats, opaco para el resto).
-            # Sin el, al reabrir el documento la cabeza volveria al pivote del
-            # modelo y se perderia el desplazamiento de la herramienta.
+            # Move/Transform manual de la guia, como DELTA respecto a la base
+            # del SVG (6 floats, opaco para el resto). ``transformIsDelta``
+            # evita reinterpretar como absoluto lo que ya es delta: sin esta
+            # marca, al cargar se le quitaria la base otra vez.
             manual = guide.manual_transform
             if guide is self.active_guide():
                 manual = self._manual_transform
             entry["transform"] = list(_normalize_transform(manual))
+            entry["transformIsDelta"] = True
             # Estados de los modelos inactivos de esta guia: el activo ya va en
             # ``state``. Copia profunda para que el JSON no comparta referencias
             # con ``guide.model_states``, que se reescribe en cada cambio.
@@ -989,6 +1069,7 @@ class LoomisProportionsDocker(DockWidget):
             self._last_pivot_position = None
             self._last_layer_position = None
             self._manual_transform = IDENTITY_TRANSFORM
+            self._base_transform = None
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
@@ -1713,23 +1794,36 @@ class LoomisProportionsDocker(DockWidget):
         except (TypeError, ValueError, IndexError, KeyError):
             return None
 
-    def _capture_manual_transform(self, layer=None):
-        """Move/Transform manual leido de la transformacion de los shapes.
+    # ------------------------------------------------------------------
+    # Base del SVG y delta manual
+    #
+    # ``addShapesFromSvg`` no deja los shapes a identidad: el importador de SVG
+    # los pasa a la coordenada de la capa y guarda esa escala en
+    # ``Shape.transformation()`` (en un lienzo a 300 ppp, 72/300 = 0.24). Esa es
+    # la BASE, y ya dibuja bien. Por eso:
+    #   * el Move/Transform del usuario se guarda como DELTA respecto a la base,
+    #   * al redibujar se aplica ``total = delta ∘ base`` UNA sola vez,
+    #   * con delta identidad no se llama a ``setTransformation`` (queda la base
+    #     que creo ``addShapesFromSvg``).
+    # Guardar el absoluto y reaplicarlo multiplicaba la base por si misma
+    # (0.24·0.24 = 0.0576): la cabeza se encogia y acababa fuera del lienzo.
+    # ------------------------------------------------------------------
 
-        Krita escribe el desplazamiento de la herramienta en
-        ``Shape.transformation()``; ``Node.position()`` de una capa vectorial
-        sigue en 0 y no lo refleja. Se excluye el marcador del pivote (se
-        recrea en cada dibujo y no aporta). Devuelve la transformacion mas
-        comun como 6 floats, o ``None`` si la capa no tiene shapes de dibujo
-        (asi no se pisa una transformacion guardada con una capa vacia).
+    def _common_shape_transform(self, layer=None, shapes=None):
+        """Transformacion mas comun de los shapes de dibujo (sin el marcador).
+
+        Devuelve 6 floats, ``IDENTITY_TRANSFORM`` si todos los shapes estan a
+        identidad, o ``None`` si la capa no tiene shapes legibles (asi no se
+        pisa un transform guardado con una capa vacia).
         """
-        layer = layer if layer is not None else self.loomis_layer
-        if layer is None:
-            return None
-        try:
-            shapes = list(layer.shapes())
-        except (AttributeError, RuntimeError, TypeError):
-            return None
+        if shapes is None:
+            layer = layer if layer is not None else self.loomis_layer
+            if layer is None:
+                return None
+            try:
+                shapes = list(layer.shapes())
+            except (AttributeError, RuntimeError, TypeError):
+                return None
         counts = {}
         found = False
         for shape in shapes:
@@ -1752,24 +1846,97 @@ class LoomisProportionsDocker(DockWidget):
             return IDENTITY_TRANSFORM
         return max(counts.items(), key=lambda item: item[1])[0]
 
-    def _apply_manual_transform(self, values, shapes=None) -> bool:
-        """Reaplica el Move/Transform a los shapes (todos por defecto).
+    def _migrate_transform(self, stored, is_delta):
+        """Delta del Move/Transform desde un valor guardado.
 
-        La transformacion manual se conserva entre redibujos: no se resetea a
-        identidad. Devuelve ``True`` si se aplico a algun shape.
+        ``transform``/``layerTransform`` de 0.7.8 y 0.7.9 eran ABSOLUTOS: ya
+        incluian la base del importador. Reaplicarlos tal cual sobre la base
+        nueva duplicaba la escala (0.24 -> 0.0576), asi que se convierten una
+        sola vez, ``delta = stored ∘ base⁻¹``, y se vuelven a guardar con
+        ``transformIsDelta`` para no reinterpretarlos dos veces. Sin base
+        capturada se supone la escala del propio valor (la base del importador
+        es una escala uniforme sin traslacion).
         """
-        values = _normalize_transform(values)
+        values = _normalize_transform(stored)
+        if is_delta:
+            return values
         if _is_identity_transform(values):
-            return False
-        # La matriz se construye una vez, no por shape.
-        matrix = _transform_from_values(values)
-        if matrix is None:
+            return IDENTITY_TRANSFORM
+        base = self._base_transform
+        if base is None:
+            base = _guess_base_transform(values)
+        inverse = _invert_transform(base)
+        if inverse is None:
+            return values
+        delta = _compose_transforms(values, inverse)
+        return IDENTITY_TRANSFORM if _is_identity_transform(delta) else delta
+
+    def _capture_base_transform(self, shapes=None):
+        """Base que el importador puso a los shapes recien creados.
+
+        Se llama justo despues de ``addShapesFromSvg`` y antes de tocar nada: la
+        transformacion comun de los shapes nuevos (sin el marcador) ES la base.
+        Si no se puede leer, se conserva la ultima conocida.
+        """
+        base = self._common_shape_transform(shapes=shapes)
+        if base is None or _is_identity_transform(base):
+            return self._base_transform
+        return base
+
+    def _capture_manual_transform(self, layer=None, base=None):
+        """Move/Transform manual como DELTA respecto a la base, o ``None``.
+
+        Krita escribe el desplazamiento de la herramienta en
+        ``Shape.transformation()``, ya compuesto con la base del importador:
+        ``delta = current ∘ base⁻¹``. Se excluye el marcador del pivote (se
+        recrea en cada dibujo y no aporta). Con la base desconocida (documento
+        recien abierto, sin dibujar en esta sesion) se supone la escala del
+        propio shape, que es exacta para un Move. Devuelve ``None`` si la capa
+        no tiene shapes de dibujo (asi no se pisa un delta guardado).
+        ``base`` permite forzar una base concreta; por defecto la de la capa.
+        """
+        common = self._common_shape_transform(layer)
+        if common is None:
+            return None
+        if _is_identity_transform(common):
+            # Capa a identidad: ni base ni delta que capturar.
+            return IDENTITY_TRANSFORM
+        if base is None:
+            base = self._base_transform
+        if base is None:
+            base = _guess_base_transform(common)
+        inverse = _invert_transform(base)
+        if inverse is None:
+            return IDENTITY_TRANSFORM
+        delta = _compose_transforms(common, inverse)
+        return IDENTITY_TRANSFORM if _is_identity_transform(delta) else delta
+
+    def _apply_manual_transform(self, values, shapes=None, base=None) -> bool:
+        """Aplica el DELTA del Move/Transform sobre la base (``delta ∘ base``).
+
+        ``values`` no es la transformacion absoluta: es el delta que se capturo
+        en ``_capture_manual_transform``. La base la pone ``addShapesFromSvg`` y
+        se compone aqui una sola vez, con el delta DESPUES (Krita aplica el
+        Move en coordenadas del documento). Con delta identidad no se toca
+        ningun shape: la base intacta ya dibuja bien. Devuelve ``True`` si
+        aplico a algun shape.
+        """
+        delta = _normalize_transform(values)
+        if _is_identity_transform(delta):
             return False
         if shapes is None:
             try:
                 shapes = list(self.loomis_layer.shapes()) if self.loomis_layer else []
             except (AttributeError, RuntimeError, TypeError):
                 shapes = []
+        total = delta
+        base = base if base is not None else self._base_transform
+        if base is not None:
+            total = _compose_transforms(delta, base)
+        # La matriz se construye una vez, no por shape.
+        matrix = _transform_from_values(total)
+        if matrix is None:
+            return False
         applied = False
         for shape in shapes:
             try:
@@ -1779,9 +1946,19 @@ class LoomisProportionsDocker(DockWidget):
                 continue
         return applied
 
-    def _set_shapes_identity(self) -> bool:
-        """Devuelve los shapes a identidad (solo en un reset explicito)."""
+    def _set_shapes_to_base(self) -> bool:
+        """Devuelve los shapes a la base del SVG (quita el delta, no la base)."""
         if QTransform is None or not self.loomis_layer:
+            return False
+        base = self._base_transform
+        if base is None:
+            common = self._common_shape_transform()
+            base = (
+                _guess_base_transform(common)
+                if common is not None else IDENTITY_TRANSFORM
+            )
+        matrix = _transform_from_values(base)
+        if matrix is None:
             return False
         try:
             shapes = list(self.loomis_layer.shapes())
@@ -1790,25 +1967,61 @@ class LoomisProportionsDocker(DockWidget):
         reset = False
         for shape in shapes:
             try:
-                shape.setTransformation(QTransform())
+                shape.setTransformation(matrix)
                 reset = True
             except (AttributeError, RuntimeError, TypeError):
                 continue
         return reset
 
+    def _total_transform(self):
+        """Transformacion que se ve en el lienzo, en unidades de la capa.
+
+        ``delta ∘ base``: la base del importador primero y el Move despues (es
+        el orden en el que Krita aplica la herramienta).
+        """
+        delta = _normalize_transform(
+            getattr(self, "_manual_transform", IDENTITY_TRANSFORM)
+        )
+        base = getattr(self, "_base_transform", None)
+        if base is None:
+            return delta
+        return _compose_transforms(delta, base)
+
+    def _document_scale(self) -> float:
+        """Pixeles del documento por unidad de la capa: ``1/base``.
+
+        La transformacion de los shapes no esta en pixeles: el importador de
+        SVG pasa las coordenadas a la unidad de la capa (puntos) y deja en
+        ``Shape.transformation()`` ese factor (0.24 en un lienzo a 300 ppp).
+        Krita vuelve a pixeles al pintar (1/0.24), asi que para que el X/Y del
+        docker sea el "Position" real hay que deshacer la base. Sin base
+        conocida la capa ya viene en pixeles (factor 1).
+        """
+        base = getattr(self, "_base_transform", None)
+        if base is None:
+            return 1.0
+        m11, m12, m21, m22, _dx, _dy = _normalize_transform(base)
+        scale = math.sqrt(abs(m11 * m22 - m21 * m12))
+        if scale <= TRANSFORM_EPSILON:
+            return 1.0
+        return 1.0 / scale
+
     def _visible_position(self):
-        """X/Y que muestra la herramienta: ``M·pivote + t`` del Move/Transform.
+        """X/Y en pixeles del documento: ``(delta·base·pivote) / base``.
 
         La transformacion completa (no solo la traslacion) importa: con
-        Transform-rotar/escalar el marcador real esta en ``M·p + t``, y el
+        Transform-rotar/escalar el marcador real esta en ``total·p``, y el
         docker tiene que mostrar ese punto, no ``p + t``.
         """
         if self.loomis_head is None:
             return (0.0, 0.0)
-        values = getattr(self, "_manual_transform", IDENTITY_TRANSFORM)
-        return _transform_point(
-            values, self.loomis_head.position_x, self.loomis_head.position_y
+        x, y = _transform_point(
+            self._total_transform(),
+            self.loomis_head.position_x,
+            self.loomis_head.position_y,
         )
+        scale = self._document_scale()
+        return (x * scale, y * scale)
 
     def _refresh_visible_position(self) -> None:
         """Escribe el X/Y efectivo en los spinboxes (sin disparar senales)."""
@@ -1840,19 +2053,21 @@ class LoomisProportionsDocker(DockWidget):
     def _set_visible_position(self, x=None, y=None) -> None:
         """Lleva el X/Y visible al valor pedido moviendo el modelo.
 
-        El Move manual no se toca (es la transformacion de la herramienta): se
-        resuelve ``p = M_lin⁻¹·(objetivo − t)``, de modo que ``M·p + t`` cae
-        exactamente en ``x``/``y`` aunque la capa este rotada o escalada.
+        El Move manual no se toca (es el delta de la herramienta): se resuelve
+        ``p = total⁻¹·(objetivo / escala)`` con ``total = delta ∘ base``, de
+        modo que el X/Y del docker cae exactamente en ``x``/``y`` aunque la
+        capa este rotada o escalada.
         """
         if self.loomis_head is None:
             return
         visible_x, visible_y = self._visible_position()
         target_x = visible_x if x is None else float(x)
         target_y = visible_y if y is None else float(y)
+        scale = self._document_scale()
         position_x, position_y = _untransform_point(
-            getattr(self, "_manual_transform", IDENTITY_TRANSFORM),
-            target_x,
-            target_y,
+            self._total_transform(),
+            target_x / scale,
+            target_y / scale,
         )
         self.loomis_head.set_position_x(position_x)
         self.loomis_head.set_position_y(position_y)
@@ -1862,15 +2077,16 @@ class LoomisProportionsDocker(DockWidget):
         """Adopta el Move/Transform de la capa sin mover el modelo.
 
         Krita deja el desplazamiento manual en la transformacion de los shapes
-        (``Shape.transformation()``); ``Node.position()`` de una capa vectorial
-        no lo refleja y ``Node.bounds()`` deriva al rotar. Aqui solo se captura
-        esa transformacion y se guarda en la guia: el pivote del modelo no se
+        (``Shape.transformation()``), compuesto con la base del importador de
+        SVG; ``Node.position()`` de una capa vectorial no lo refleja y
+        ``Node.bounds()`` deriva al rotar. Aqui solo se captura el DELTA
+        respecto a esa base y se guarda en la guia: el pivote del modelo no se
         toca, y el X/Y del docker pasa a ser la posicion efectiva
-        (``M·pivote + t``, el "Position" de la herramienta).
+        (``delta·base·pivote``).
 
         No se redibuja: la herramienta esta moviendo los shapes actuales y el
-        canvas se reconstruye en el siguiente ``draw`` (Input Delay), donde la
-        transformacion se reaplica a los shapes nuevos.
+        canvas se reconstruye en el siguiente ``draw`` (Input Delay), donde el
+        delta se compone una sola vez con la base nueva.
         """
         if (not self.doc or not self.loomis_layer or not self.loomis_head
                 or self._drawing):
@@ -1893,7 +2109,8 @@ class LoomisProportionsDocker(DockWidget):
             if guide is not None:
                 guide.manual_transform = captured
             self._log_pivot(
-                f"sync transform old={previous} new={captured}"
+                f"sync delta old={previous} new={captured}"
+                f" base={_normalize_transform(getattr(self, '_base_transform', None))}"
                 f" pos={self.loomis_head.position_x:.1f},"
                 f"{self.loomis_head.position_y:.1f}"
             )
@@ -1930,8 +2147,9 @@ class LoomisProportionsDocker(DockWidget):
             return
 
         # Antes de borrar nada: el Move/Transform deja el desplazamiento en la
-        # transformacion de los shapes. Se captura para reaplicarlo a los
-        # shapes nuevos; el modelo (pivote) no se mueve por eso.
+        # transformacion de los shapes, compuesto con la base del importador de
+        # SVG. Se captura como delta para reaplicarlo a los shapes nuevos; el
+        # modelo (pivote) no se mueve por eso.
         self.sync_manual_position()
         prev_layer = self._last_layer_position
         prev_marker = self._last_pivot_position
@@ -1956,10 +2174,22 @@ class LoomisProportionsDocker(DockWidget):
                 added = list(self.loomis_layer.addShapesFromSvg(svg) or [])
             except (AttributeError, RuntimeError, TypeError):
                 added = []
-            # El Move manual se reaplica a TODO lo nuevo, marcador incluido:
-            # asi su posicion absoluta queda donde el usuario lo dejo y no se
-            # pierde al rotar/cambiar el modelo.
-            reapplied = self._apply_manual_transform(self._manual_transform, added)
+            # ANTES de tocar nada: la transformacion que el importador puso a
+            # los shapes nuevos es la base (p. ej. 0.24). El delta manual se
+            # compone sobre ella; nunca se reaplica el absoluto.
+            guide = self.active_guide()
+            base = self._capture_base_transform(added or None)
+            if base is not None:
+                self._base_transform = base
+                if guide is not None:
+                    guide.base_transform = base
+            # El Move manual (delta) se reaplica a TODO lo nuevo, marcador
+            # incluido: asi su posicion efectiva queda donde el usuario lo dejo
+            # y no se pierde al rotar/cambiar el modelo. Con delta identidad no
+            # se llama a ``setTransformation``: la base ya dibuja bien.
+            reapplied = self._apply_manual_transform(
+                self._manual_transform, added, base=base
+            )
             # Ya esta en los shapes nuevos (o era identidad): el sondeo puede
             # volver a capturar sin miedo.
             self._transform_pending_apply = False
@@ -1979,7 +2209,8 @@ class LoomisProportionsDocker(DockWidget):
                 f"draw pos={self.loomis_head.position_x:.1f},"
                 f"{self.loomis_head.position_y:.1f}"
                 f" visible={visible_x:.1f},{visible_y:.1f}"
-                f" manual={_normalize_transform(self._manual_transform)}"
+                f" base={_normalize_transform(self._base_transform)}"
+                f" delta={_normalize_transform(self._manual_transform)}"
                 f" reapplied={reapplied}"
                 f" layer={_fmt_point(self._last_layer_position)}"
                 f" marker={_fmt_point(self._last_pivot_position)}"
@@ -1990,7 +2221,7 @@ class LoomisProportionsDocker(DockWidget):
             if guide is not None:
                 guide.last_center = self._last_layer_bounds_center
                 guide.pivot_shape = self._pivot_shape
-            # El X/Y del docker es la posicion efectiva (modelo + Move manual).
+            # El X/Y del docker es la posicion efectiva (base + delta manual).
             self._refresh_visible_position()
         except (AttributeError, RuntimeError, TypeError):
             self._last_pivot_position = None
@@ -2032,15 +2263,17 @@ class LoomisProportionsDocker(DockWidget):
         """Center the guide and drop the manual Move/Transform offset."""
         center_x = self.doc.width() // 2 if self.doc else 0
         center_y = self.doc.height() // 2 if self.doc else 0
-        # Reset explicito: ademas de centrar el pivote, se descarta el Move
+        # Reset explicito: ademas de centrar el pivote, se descarta el delta
         # manual. Si no se limpiara tambien en los shapes actuales, el sync
         # siguiente lo volveria a capturar antes de que el canvas se redibuje.
+        # Los shapes vuelven a la BASE del SVG, no a identidad: con identidad
+        # la cabeza se quedaria a escala 1 (cuatro veces mas grande).
         self._manual_transform = IDENTITY_TRANSFORM
         self._transform_pending_apply = False
         guide = self.active_guide()
         if guide is not None:
             guide.manual_transform = IDENTITY_TRANSFORM
-        self._set_shapes_identity()
+        self._set_shapes_to_base()
         # Si el Move acabo en la capa (Node.move) y no en los shapes, tambien se
         # devuelve al origen: es un reset explicito del usuario.
         try:
@@ -2369,10 +2602,13 @@ class LoomisProportionsDocker(DockWidget):
             data["positionUnit"] = "normalized"
         else:
             data["positionUnit"] = "pixels"
-        # Move/Transform manual del canvas, en el mismo bloque que el resto de
-        # la cabeza. Es opaco para el Grimorio de Color y para las versiones
-        # anteriores: si falta al cargar, se usa la identidad.
+        # Move/Transform manual del canvas, como DELTA respecto a la base del
+        # SVG, en el mismo bloque que el resto de la cabeza. Es opaco para el
+        # Grimorio de Color y para las versiones anteriores: si falta al
+        # cargar, se usa la identidad; ``transformIsDelta`` marca que este
+        # valor ya no incluye la base (la de 0.7.8/0.7.9 si la incluia).
         data["layerTransform"] = list(_normalize_transform(self._manual_transform))
+        data["transformIsDelta"] = True
         return data
 
     def _save_preset(self) -> None:
@@ -2405,19 +2641,24 @@ class LoomisProportionsDocker(DockWidget):
         if target != self._current_model_id():
             self._switch_model(target)
         self.loomis_head.from_dict(data)
-        # Move/Transform manual del preset (opcional, opaco). Se aplica tambien
-        # a los shapes actuales: si no, el sondeo de sync lo volveria a capturar
-        # del canvas viejo antes de que llegue el redibujo.
-        layer_transform = _normalize_transform(data.get("layerTransform"))
-        self._manual_transform = layer_transform
+        # Move/Transform manual del preset (opcional, opaco), como DELTA. Un
+        # preset de 0.7.8/0.7.9 lo trae absoluto (con la base dentro): se migra
+        # para no duplicar la escala. Se aplica tambien a los shapes actuales:
+        # si no, el sondeo de sync lo volveria a capturar del canvas viejo
+        # antes de que llegue el redibujo.
+        layer_delta = self._migrate_transform(
+            data.get("layerTransform"),
+            bool(data.get("transformIsDelta")) or bool(data.get("layerTransformIsDelta")),
+        )
+        self._manual_transform = layer_delta
         guide = self.active_guide()
         if guide is not None:
-            guide.manual_transform = layer_transform
+            guide.manual_transform = layer_delta
         if self.loomis_layer is not None:
-            if _is_identity_transform(layer_transform):
-                self._set_shapes_identity()
+            if _is_identity_transform(layer_delta):
+                self._set_shapes_to_base()
             else:
-                self._apply_manual_transform(layer_transform)
+                self._apply_manual_transform(layer_delta)
         self._transform_pending_apply = False
         doc, width, height = self._doc_size()
         normalized = data.get("positionUnit") == "normalized"
@@ -2568,6 +2809,9 @@ class LoomisProportionsDocker(DockWidget):
         # en la raiz del fichero por si lo escribio otra herramienta.
         if "layerTransform" not in data and isinstance(raw.get("layerTransform"), list):
             data["layerTransform"] = raw["layerTransform"]
+        # ``transformIsDelta`` (marca de formato) tambien puede venir en la raiz.
+        if "transformIsDelta" not in data and "transformIsDelta" in raw:
+            data["transformIsDelta"] = raw["transformIsDelta"]
         self.apply_preset(data)
         self.ui.presetStatus.setText(t("status.head_loaded", name=Path(path).name))
 

@@ -41,23 +41,31 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   after the pending fixes).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
-- **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9)**:
-  the head rotates around an invisible pivot at the centre of the skull, so rotating or
-  switching model/type/sex keeps it in place. A manual Move/Transform is **captured from
-  the shapes' transformation** (Krita writes it there; a vector layer keeps
-  `Node.position()` at 0), **reapplied to every new shape** after each redraw and saved in
-  `guides.json` (`transform`) and in the head state (`layerTransform`), so it survives
-  redraws, document reloads and presets. The layer transform is **no longer reset** before
-  a redraw. The pivot is synced **before** every redraw, so touching the docker no longer
-  sends the head back to its old X/Y. The docker preview is live while you drag, and the
-  vector layer redraws after you stop; the **Delay** spinbox under View sets that wait
-  (50–5000 ms, 500 by default). Each sync with a new matrix and each draw are logged to
-  `loomis_head/pivot.log` in Krita's app data directory, with `manual=` / `reapplied=`
-  fields (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
-  The docker **X/Y is the effective position**: the model pivot passed through the **full**
-  manual matrix (`M·p + t`), which is the point the Transform tool really shows. Editing
-  X/Y solves the inverse (`M⁻¹·(target − t)`) and moves only the model pivot, so the Move
-  is kept and the head does not jump even when the layer is rotated or scaled.
+- **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9,
+  base/delta in 0.7.10)**: the head rotates around an invisible pivot at the centre of the
+  skull, so rotating or switching model/type/sex keeps it in place. `addShapesFromSvg`
+  leaves the layer's **base** scale in `Shape.transformation()` (0.24 on a 300 ppi canvas)
+  and Krita writes a manual Move/Transform on top of it, so the docker keeps the two apart:
+  the **base** is captured right after the SVG import (per layer, never persisted) and the
+  **delta** is the user's Move (`current ∘ base⁻¹`), saved in `guides.json` (`transform` +
+  `"transformIsDelta": true`) and in the head state (`layerTransform`), so it survives
+  redraws, document reloads and presets. A redraw applies **delta ∘ base once**; with the
+  delta at identity `setTransformation()` is not called at all. 0.7.9 captured the base as
+  if it were the Move and reapplied it, squaring the scale (0.24² = 0.0576) and leaving the
+  head invisible: 0.7.8/0.7.9 absolute values are migrated to a delta on load
+  (`delta = stored ∘ base⁻¹`) and re-saved with the flag, so they are never migrated twice.
+  The pivot is synced **before** every redraw, so touching the docker no longer sends the
+  head back to its old X/Y; an explicit reset returns the shapes to the base, not to
+  identity. The docker preview is live while you drag, and the vector layer redraws after
+  you stop; the **Delay** spinbox under View sets that wait (50–5000 ms, 500 by default).
+  Each sync with a new matrix and each draw are logged to `loomis_head/pivot.log` in
+  Krita's app data directory, with `base=` / `delta=` / `reapplied=` fields (see
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+  The docker **X/Y is the effective position in document pixels**: the model pivot passed
+  through `delta ∘ base` and divided by the base scale (`(delta·base·p) / base`), because
+  shape transformations live in layer units (points), not pixels. Editing X/Y undoes the
+  base, solves the inverse (`M_lin⁻¹·(target/base − t)`) and moves only the model pivot, so
+  the Move is kept and the head does not jump even when the layer is rotated or scaled.
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
   touch the others.
 - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
@@ -96,7 +104,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 to 0.7.9 are
+1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 to 0.7.10 are
    local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
@@ -213,7 +221,7 @@ every silhouette is a chain of segments. Use it to place planes, then draw over 
 > retopologised derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), whose design is by
 > **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 > the full text and a copy-paste credit line are in
-> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.9
+> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.10
 > is a **local build**: the public ZIP ships only after validating it in Krita; until then
 > `release/` carries the 0.7.2 artifacts, the last public build.
 
@@ -224,7 +232,7 @@ cd loomis_head
 python3 -m unittest test_generator test_asaro -v
 ```
 
-The **143** unit tests (66 generator + 77 Asaro) do not need Krita, Qt or PyQt5. The
+The **153** unit tests (76 generator + 77 Asaro) do not need Krita, Qt or PyQt5. The
 docker acceptance test needs Qt but **not** Krita: it builds `LoomisProportionsDocker`
 with a `krita` stub and no document (five tabs, Delay 50–5000 ms at 500, model panels and
 `_visible_position()`). It skips with `unittest.SkipTest` when no PyQt5/PyQt6 is available,

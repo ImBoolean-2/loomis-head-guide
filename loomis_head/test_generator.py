@@ -700,6 +700,10 @@ class _FakeShape:
         self._box = _FakeRect(*box)
         self._transform = _FakeTransform()
         self.removed = False
+        # Llamadas a ``setTransformation`` hechas por el plugin (el import lo
+        # asigna directo): sirve para comprobar que un delta identidad no toca
+        # los shapes y deja intacta la base.
+        self.set_calls = 0
 
     def name(self):
         return self._name
@@ -715,16 +719,21 @@ class _FakeShape:
 
     def setTransformation(self, transform):
         self._transform = transform
+        self.set_calls += 1
 
     def remove(self):
         self.removed = True
 
 
 class _FakeLayer:
-    def __init__(self, shapes=None):
+    def __init__(self, shapes=None, base=None):
         self._shapes = list(shapes or [])
         self._parent = object()
         self.rects = []
+        # Base que el importador pone a los shapes nuevos. ``None`` equivale a
+        # identidad (shapes de los fakes clasicos); con ``(0.24, 0, 0, 0.24,
+        # 0, 0)`` se imita Krita en un lienzo a 300 ppp.
+        self.base = tuple(base) if base is not None else None
 
     def parentNode(self):
         return self._parent
@@ -747,6 +756,11 @@ class _FakeLayer:
             _FakeShape("path-back", (cx - 30.0, cy - 30.0, 60.0, 60.0)),
             _FakeShape("loomis-pivot", (cx - 0.5, cy - 0.5, 1.0, 1.0)),
         ]
+        if self.base is not None:
+            for shape in created:
+                # Asignacion directa: la base la pone el importador, no el
+                # plugin (no cuenta como ``setTransformation``).
+                shape._transform = _FakeTransform(*self.base)
         self._shapes.extend(created)
         return created
 
@@ -893,6 +907,9 @@ class LayerTransformTests(unittest.TestCase):
         docker.guides = [plugin.Guide(model, layer, "Loomis Head 1")] if guides else []
         docker.active_index = 0
         docker._manual_transform = plugin.IDENTITY_TRANSFORM
+        # Base del importador de SVG; en estos fakes los shapes se crean a
+        # identidad salvo que el test pida una base (0.24, como Krita).
+        docker._base_transform = None
         docker._transform_pending_apply = False
         docker._pivot_shape = None
         docker._last_pivot_position = None
@@ -921,10 +938,24 @@ class LayerTransformTests(unittest.TestCase):
         docker._refresh_guide_combo = lambda: None
         return docker
 
-    def _move_by(self, dx, dy):
-        """Simula la herramienta Move: la transformacion va a cada shape."""
-        for shape in self.layer.shapes():
-            shape.setTransformation(_FakeTransform(1.0, 0.0, 0.0, 1.0, dx, dy))
+    def _move_by(self, dx, dy, layer=None):
+        """Simula la herramienta Move de Krita.
+
+        El arrastre se aplica en coordenadas del documento DESPUES de la base
+        del SVG: la transformacion de cada shape pasa a ``move ∘ base`` (la
+        parte lineal no cambia y la traslacion suma ``dx``/``dy``).
+        """
+        layer = layer if layer is not None else self.layer
+        for shape in layer.shapes():
+            current = shape.transformation()
+            total = self.plugin._compose_transforms(
+                (1.0, 0.0, 0.0, 1.0, dx, dy),
+                (
+                    current.m11(), current.m12(), current.m21(),
+                    current.m22(), current.dx(), current.dy(),
+                ),
+            )
+            shape.setTransformation(_FakeTransform(*total))
 
     def test_draw_keeps_the_manual_move(self):
         self.docker.draw_lines_with_vectors(samples=16)
@@ -1270,6 +1301,234 @@ class LayerTransformTests(unittest.TestCase):
         self.assertAlmostEqual(loomis.position_y, 447.0)
         self.assertAlmostEqual(loomis.scale, 0.63)
         self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+
+    # --- 0.7.10: base del importador de SVG + delta manual ----------------
+    #
+    # Krita no deja los shapes nuevos a identidad: el importador los escala a
+    # la coordenada de la capa (0.24 en un lienzo a 300 ppp) y eso YA dibuja
+    # bien. El Move se guarda como delta respecto a esa base; reaplicar el
+    # absoluto multiplicaba la base por si misma (0.0576) y la cabeza
+    # desaparecia.
+
+    BASE_024 = (0.24, 0.0, 0.0, 0.24, 0.0, 0.0)
+
+    def _make_base_docker(self):
+        layer = _FakeLayer([], base=self.BASE_024)
+        model = LoomisHead3D()
+        model.set_position_x(1660.0)
+        model.set_position_y(447.0)
+        doc = _FakeDoc(layers=[layer])
+        return self._make_docker(layer, model, doc), layer, model
+
+    def test_new_head_without_move_keeps_the_base_untouched(self):
+        """Sin Move: base 0.24, delta identidad, ni un setTransformation."""
+        docker, layer, model = self._make_base_docker()
+        docker.draw_lines_with_vectors(samples=16)
+
+        self.assertEqual(docker._base_transform, self.BASE_024)
+        self.assertEqual(docker._manual_transform, self.plugin.IDENTITY_TRANSFORM)
+        shapes = layer.shapes()
+        self.assertTrue(shapes)
+        for shape in shapes:
+            self.assertEqual(shape.set_calls, 0)
+            transform = shape.transformation()
+            self.assertAlmostEqual(transform.m11(), 0.24)
+            self.assertAlmostEqual(transform.m22(), 0.24)
+            self.assertAlmostEqual(transform.dx(), 0.0)
+        # La caja del contenido no colapsa (sigue siendo la del SVG).
+        self.assertGreater(layer.bounds().width(), 0.0)
+        self.assertAlmostEqual(model.position_x, 1660.0)
+        self.assertAlmostEqual(model.position_y, 447.0)
+        # X/Y del docker = donde se ve la cabeza (pixeles del documento).
+        visible_x, visible_y = docker._visible_position()
+        self.assertAlmostEqual(visible_x, 1660.0)
+        self.assertAlmostEqual(visible_y, 447.0)
+
+    def test_move_composes_delta_after_the_base_without_double_scaling(self):
+        docker, layer, model = self._make_base_docker()
+        docker.draw_lines_with_vectors(samples=16)
+        self._move_by(100.0, 50.0, layer)
+        docker.sync_manual_position()
+
+        # Delta = current ∘ base⁻¹: traslacion pura del arrastre.
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 100.0, 50.0))
+        # El pivote del modelo no se mueve con el Move.
+        self.assertEqual((model.position_x, model.position_y), (1660.0, 447.0))
+        # La transformacion de la capa es la base (0.24) + el Move, en unidades
+        # de capa; el X/Y del docker lo pasa a pixeles del documento (/0.24),
+        # que es donde se ve la cabeza: 1 unidad de capa = 1/0.24 px.
+        visible_x, visible_y = docker._visible_position()
+        self.assertAlmostEqual(visible_x, 1660.0 + 100.0 / 0.24)
+        self.assertAlmostEqual(visible_y, 447.0 + 50.0 / 0.24)
+
+        docker.draw_lines_with_vectors(samples=16)
+        shapes = layer.shapes()
+        self.assertTrue(shapes)
+        for shape in shapes:
+            transform = shape.transformation()
+            self.assertAlmostEqual(transform.m11(), 0.24)  # no 0.0576
+            self.assertAlmostEqual(transform.m22(), 0.24)
+            self.assertAlmostEqual(transform.dx(), 100.0)  # el Move no se pierde
+            self.assertAlmostEqual(transform.dy(), 50.0)
+        self.assertGreater(layer.bounds().width(), 0.0)
+
+    def test_editing_xy_inverts_the_total_with_a_base(self):
+        docker, layer, model = self._make_base_docker()
+        docker.draw_lines_with_vectors(samples=16)
+        docker._set_visible_position(x=800.0, y=400.0)
+
+        visible_x, visible_y = docker._visible_position()
+        self.assertAlmostEqual(visible_x, 800.0, places=6)
+        self.assertAlmostEqual(visible_y, 400.0, places=6)
+        # El modelo (en pixeles del documento) queda en el valor pedido; la
+        # capa lo guarda multiplicado por la base de su sistema de coordenadas.
+        self.assertAlmostEqual(model.position_x, 800.0, places=6)
+        self.assertAlmostEqual(model.position_y, 400.0, places=6)
+
+    def test_rotation_and_model_change_keep_the_delta_on_the_new_base(self):
+        docker, layer, model = self._make_base_docker()
+        docker.draw_lines_with_vectors(samples=16)
+        self._move_by(100.0, 50.0, layer)
+        docker.sync_manual_position()
+
+        model.set_quaternion(q_axis_angle([0.0, 1.0, 0.0], 0.7))
+        model.set_scale(0.9)
+        docker.draw_lines_with_vectors(samples=16)
+
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 100.0, 50.0))
+        self.assertEqual(docker._base_transform, self.BASE_024)
+        shapes = layer.shapes()
+        self.assertTrue(shapes)
+        for shape in shapes:
+            transform = shape.transformation()
+            self.assertAlmostEqual(transform.m11(), 0.24)
+            self.assertAlmostEqual(transform.dx(), 100.0)
+            self.assertAlmostEqual(transform.dy(), 50.0)
+        self.assertGreater(layer.bounds().width(), 0.0)
+
+        # Cambiar de tipo/modelo (Loomis -> Asaro) recrea la base y conserva el
+        # delta: la cabeza no se encoge ni desaparece.
+        self.assertIsNotNone(docker._switch_model("asaro"))
+        docker.draw_lines_with_vectors(samples=16)
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 100.0, 50.0))
+        for shape in layer.shapes():
+            transform = shape.transformation()
+            self.assertAlmostEqual(transform.m11(), 0.24)
+            self.assertAlmostEqual(transform.dx(), 100.0)
+
+    def test_legacy_absolute_transform_is_migrated_to_delta_once(self):
+        """0.7.8/0.7.9 guardaban el absoluto (0.24 + Move): se migra al cargar."""
+        layer = _FakeLayer([], base=self.BASE_024)
+        doc = _FakeDoc(layers=[layer])
+        docker = self._make_docker(layer, self.model, doc, guides=False)
+        docker._load_guides(doc, {"guides": [{
+            "name": "Loomis Head 1",
+            "transform": [0.24, 0.0, 0.0, 0.24, 229.6366, 133.7511],
+        }]})
+        self.assertEqual(len(docker.guides), 1)
+        self.assertEqual(
+            docker.guides[0].manual_transform,
+            (1.0, 0.0, 0.0, 1.0, 229.6366, 133.7511),
+        )
+
+        docker._set_active_guide(0)
+        docker.draw_lines_with_vectors(samples=16)
+        shapes = layer.shapes()
+        self.assertTrue(shapes)
+        for shape in shapes:
+            transform = shape.transformation()
+            # Una sola base: 0.24 y el Move tal cual (no 0.0576 ni 55.1).
+            self.assertAlmostEqual(transform.m11(), 0.24)
+            self.assertAlmostEqual(transform.dx(), 229.6366)
+            self.assertAlmostEqual(transform.dy(), 133.7511)
+
+        # Se vuelve a guardar ya como delta: al recargar no se migra dos veces.
+        docker._save_doc_state()
+        saved = json.loads(Path(self.tmp.name, "guides.json").read_text(encoding="utf-8"))
+        entry = saved["documents"]["unit.kra"]["guides"][0]
+        self.assertTrue(entry["transformIsDelta"])
+        self.assertEqual(
+            entry["transform"], [1.0, 0.0, 0.0, 1.0, 229.6366, 133.7511]
+        )
+
+    def test_reopen_derives_the_base_from_the_stored_shapes(self):
+        """Reabrir: base deducida de los shapes guardados y X/Y en pixeles."""
+        shapes = [
+            _FakeShape("path-front", (0.0, 0.0, 80.0, 80.0)),
+            _FakeShape("path-back", (0.0, 0.0, 60.0, 60.0)),
+        ]
+        for shape in shapes:
+            shape._transform = _FakeTransform(0.24, 0.0, 0.0, 0.24, 24.0, 12.0)
+        layer = _FakeLayer(shapes)
+        doc = _FakeDoc(layers=[layer])
+        docker = self._make_docker(layer, self.model, doc, guides=False)
+        docker._load_guides(doc, {"guides": [{
+            "name": "Loomis Head 1",
+            "state": {
+                "model": "loomis",
+                "positionX": 0.5,
+                "positionY": 0.5,
+                "positionUnit": "normalized",
+            },
+            "transform": [0.24, 0.0, 0.0, 0.24, 24.0, 12.0],
+        }]})
+        docker._set_active_guide(0)
+
+        # Delta migrado: la base se quita una sola vez.
+        self.assertEqual(docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 24.0, 12.0))
+        self.assertEqual(docker._base_transform, self.BASE_024)
+        # X/Y = donde se ve la cabeza (unidades de capa -> pixeles).
+        visible_x, visible_y = docker._visible_position()
+        self.assertAlmostEqual(visible_x, 1000.0 + 24.0 / 0.24)
+        self.assertAlmostEqual(visible_y, 500.0 + 12.0 / 0.24)
+
+    def test_delta_transform_is_not_migrated_twice(self):
+        layer = _FakeLayer([], base=self.BASE_024)
+        doc = _FakeDoc(layers=[layer])
+        docker = self._make_docker(layer, self.model, doc, guides=False)
+        docker._load_guides(doc, {"guides": [{
+            "name": "Loomis Head 1",
+            "transform": [1.0, 0.0, 0.0, 1.0, 100.0, 50.0],
+            "transformIsDelta": True,
+        }]})
+        self.assertEqual(
+            docker.guides[0].manual_transform, (1.0, 0.0, 0.0, 1.0, 100.0, 50.0)
+        )
+
+    def test_preset_with_legacy_absolute_transform_is_migrated(self):
+        self._stub_preset_dependencies()
+        self.docker._base_transform = self.BASE_024
+        self.docker.apply_preset({
+            "model": "loomis",
+            "positionUnit": "pixels",
+            "positionX": 200.0,
+            "positionY": 100.0,
+            "layerTransform": [0.24, 0.0, 0.0, 0.24, 258.0, 84.0],
+        })
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 258.0, 84.0))
+
+    def test_preset_delta_marked_as_delta_is_kept(self):
+        self._stub_preset_dependencies()
+        self.docker._base_transform = self.BASE_024
+        self.docker.apply_preset({
+            "model": "loomis",
+            "layerTransform": [1.0, 0.0, 0.0, 1.0, 40.0, -20.0],
+            "transformIsDelta": True,
+        })
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 40.0, -20.0))
+
+    def test_compose_and_invert_helpers(self):
+        compose = self.plugin._compose_transforms
+        invert = self.plugin._invert_transform
+        base = self.BASE_024
+        move = (1.0, 0.0, 0.0, 1.0, 100.0, 50.0)
+
+        total = compose(move, base)
+        self.assertEqual(total, (0.24, 0.0, 0.0, 0.24, 100.0, 50.0))
+        # delta = total ∘ base⁻¹ devuelve el Move puro.
+        self.assertEqual(compose(total, invert(base)), move)
+        # Identidad: componer con la inversa deja la matriz original.
+        self.assertEqual(compose(compose(base, invert(base)), base), base)
 
 
 class EventPositionTests(unittest.TestCase):
