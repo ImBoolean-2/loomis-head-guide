@@ -316,3 +316,33 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
 - **Aviso — build local**: 0.7.7 es **solo local**. No hay **ZIP ni patch 0.7.7**; el ZIP
   público se genera solo después de validar este build en Krita. `release/` sigue con los
   artefactos **0.7.2**, que son la última build pública (0.7.3 a 0.7.7 son locales).
+
+## 0.7.8 — 2026-11-11
+
+- **Se elimina el reset de la 0.7.7**: `_reset_layer_transform()` neutralizaba el Move
+  antes de cada dibujo y la cabeza volvía al pivote del modelo. Ahora
+  `_capture_manual_transform()` lee la transformación manual (`Shape.transformation()`,
+  excluyendo el marcador) y `_apply_manual_transform()` la reaplica a **todos** los shapes
+  nuevos del SVG, marcador incluido. `_set_shapes_identity()` queda solo para el reset
+  explícito (`reset_position`).
+- **Persistencia del Move**: la guía guarda `transform` (6 floats: `m11, m12, m21, m22,
+  dx, dy`) dentro de su entrada de `guides.json`, y el preset/estado de la cabeza guarda
+  `head.layerTransform`. Al reabrir el documento o cargar un preset se restaura el
+  desplazamiento; si falta (documento o JSON anterior), se usa la identidad.
+- **Semántica X/Y efectiva**: el X/Y del docker pasa a ser `modelo + transformación manual`
+  — el **Position** que muestra la herramienta de Krita al mover la capa. Editar X/Y
+  desplaza el pivote del modelo por la diferencia y **no toca** el Move manual, así que la
+  cabeza no salta ni pierde el desplazamiento. `_visible_position()`,
+  `_refresh_visible_position()` y `_set_visible_position()` son la única ruta de lectura y
+  escritura de esos campos, sliders y spinboxes incluidos.
+- **`pivot.log` con el Move manual**: la línea de `draw` añade `manual=<6 floats>` y
+  `reapplied=<True|False>`, y `sync transform` registra `old=`/`new=`; sigue en
+  `QStandardPaths.AppDataLocation/loomis_head/pivot.log`
+  (`~/.var/app/org.kde.krita/data/krita/loomis_head/pivot.log` en el flatpak).
+- **Tests**: **128** unit tests (51 generador + 77 Asaro) en verde, 7 nuevos que montan el
+  docker con stubs de `krita`/Qt y cubren captura, reaplicación, reset explícito,
+  persistencia y X/Y efectivo. Build offscreen del docker (`test_build_078.py`) OK: 5 tabs,
+  delay 500 ms, `_visible_position()` presente.
+- **Aviso — build local**: 0.7.8 es **solo local**. No hay **ZIP ni patch 0.7.8**; el ZIP
+  público se genera solo después de validar este build en Krita. `release/` sigue con los
+  artefactos **0.7.2**, que son la última build pública (0.7.3 a 0.7.8 son locales).

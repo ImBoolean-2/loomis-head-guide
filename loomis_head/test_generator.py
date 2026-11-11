@@ -6,6 +6,7 @@
 Ejecutar desde esta carpeta:
     python3 -m unittest test_generator.py -v
 """
+import json
 import math
 import sys
 import types
@@ -604,6 +605,434 @@ class PivotTests(unittest.TestCase):
         second = head._to_screen(head._to_camera([Vector3(0.0, 0.0, 0.0)]), 900.0, 900.0)[0]
         self.assertAlmostEqual(first.x, second.x, places=6)
         self.assertAlmostEqual(first.y, second.y, places=6)
+
+
+# --- Move/Transform manual (capa vectorial) ---------------------------------
+#
+# El docker no se puede instanciar fuera de Krita (necesita Qt y el dock), asi
+# que estas pruebas montan un objeto con ``object.__new__`` y stubs minimos de
+# ``krita``/``qt_compat``. Cubren el flujo real de ``draw_lines_with_vectors``:
+# capturar la transformacion de los shapes viejos, reaplicarla a los nuevos y
+# guardarla en el estado de la guia.
+
+_plugin_module = None
+
+
+class _FakePoint:
+    def __init__(self, x=0.0, y=0.0):
+        self._x = float(x)
+        self._y = float(y)
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+    def __repr__(self):
+        return f"({self._x}, {self._y})"
+
+
+class _FakeRect:
+    def __init__(self, x=0.0, y=0.0, width=0.0, height=0.0):
+        self._x, self._y = float(x), float(y)
+        self._w, self._h = float(width), float(height)
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+    def isNull(self):
+        return self._w == 0.0 and self._h == 0.0
+
+    def isEmpty(self):
+        return self._w <= 0.0 or self._h <= 0.0
+
+
+class _FakeTransform:
+    """QTransform afin 2D minimo: m11..dy, map y setMatrix."""
+
+    def __init__(self, m11=1.0, m12=0.0, m21=0.0, m22=1.0, dx=0.0, dy=0.0):
+        self._m = [float(v) for v in (m11, m12, m21, m22, dx, dy)]
+
+    def m11(self):
+        return self._m[0]
+
+    def m12(self):
+        return self._m[1]
+
+    def m21(self):
+        return self._m[2]
+
+    def m22(self):
+        return self._m[3]
+
+    def dx(self):
+        return self._m[4]
+
+    def dy(self):
+        return self._m[5]
+
+    def map(self, point):
+        x, y = point.x(), point.y()
+        m11, m12, m21, m22, dx, dy = self._m
+        return _FakePoint(m11 * x + m21 * y + dx, m12 * x + m22 * y + dy)
+
+    def setMatrix(self, m11, m12, _m13, m21, m22, _m23, m31, m32, _m33):
+        self._m = [float(v) for v in (m11, m12, m21, m22, m31, m32)]
+
+    def translate(self, dx, dy):
+        self._m[4] += float(dx)
+        self._m[5] += float(dy)
+
+
+class _FakeShape:
+    def __init__(self, name="shape", box=(0.0, 0.0, 10.0, 10.0)):
+        self._name = name
+        self._box = _FakeRect(*box)
+        self._transform = _FakeTransform()
+        self.removed = False
+
+    def name(self):
+        return self._name
+
+    def boundingBox(self):
+        return self._box
+
+    def transformation(self):
+        return self._transform
+
+    def absoluteTransformation(self):
+        return self._transform
+
+    def setTransformation(self, transform):
+        self._transform = transform
+
+    def remove(self):
+        self.removed = True
+
+
+class _FakeLayer:
+    def __init__(self, shapes=None):
+        self._shapes = list(shapes or [])
+        self._parent = object()
+        self.rects = []
+
+    def parentNode(self):
+        return self._parent
+
+    def name(self):
+        return "Loomis Head 1"
+
+    def shapes(self):
+        return [shape for shape in self._shapes if not shape.removed]
+
+    def addShapesFromSvg(self, svg):
+        import re
+
+        match = re.search(r'id="loomis-pivot" cx="([-0-9.]+)" cy="([-0-9.]+)"', svg)
+        if match is None:  # pragma: no cover - el SVG siempre trae el marcador
+            raise AssertionError("el SVG no trae el marcador del pivote")
+        cx, cy = float(match.group(1)), float(match.group(2))
+        created = [
+            _FakeShape("path-front", (cx - 40.0, cy - 40.0, 80.0, 80.0)),
+            _FakeShape("path-back", (cx - 30.0, cy - 30.0, 60.0, 60.0)),
+            _FakeShape("loomis-pivot", (cx - 0.5, cy - 0.5, 1.0, 1.0)),
+        ]
+        self._shapes.extend(created)
+        return created
+
+    def position(self):
+        return _FakePoint(0.0, 0.0)
+
+    def bounds(self):
+        shapes = self.shapes()
+        if not shapes:
+            return _FakeRect()
+        xs = [shape.boundingBox().x() for shape in shapes]
+        ys = [shape.boundingBox().y() for shape in shapes]
+        right = max(shape.boundingBox().x() + shape.boundingBox().width() for shape in shapes)
+        bottom = max(shape.boundingBox().y() + shape.boundingBox().height() for shape in shapes)
+        return _FakeRect(min(xs), min(ys), right - min(xs), bottom - min(ys))
+
+
+class _FakeNode:
+    def __init__(self, children=None):
+        self._children = list(children or [])
+
+    def childNodes(self):
+        return self._children
+
+
+class _FakeDoc:
+    def __init__(self, width=2000, height=1000, layers=None):
+        self._width = width
+        self._height = height
+        self._root = _FakeNode(layers or [])
+
+    def width(self):
+        return self._width
+
+    def height(self):
+        return self._height
+
+    def rootNode(self):
+        return self._root
+
+    def fileName(self):
+        return "unit.kra"
+
+
+class _FakeSpinBox:
+    def __init__(self, value=0):
+        self._value = int(value)
+        self.signals_blocked = False
+
+    def value(self):
+        return self._value
+
+    def setValue(self, value):
+        # QSignalBlocker no bloquea setValue, solo las senales.
+        self._value = int(value)
+
+    def blockSignals(self, blocked):
+        self.signals_blocked = bool(blocked)
+        return False
+
+
+def _plugin():
+    """Importa ``loomis_head_plugin`` con stubs de Qt y Krita (sin Krita)."""
+    global _plugin_module
+    if _plugin_module is not None:
+        return _plugin_module
+
+    class _Widget:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _Signal:
+        def connect(self, *args, **kwargs):
+            return None
+
+    qt = types.ModuleType("loomis_head.qt_compat")
+    qt.QtCore = types.SimpleNamespace(QPointF=_FakePoint, QLocale=None)
+    qt.QtWidgets = types.SimpleNamespace(QSpinBox=_Widget)
+    qt.QtGui = types.SimpleNamespace(QTransform=_FakeTransform)
+    qt.EXPANDING = object()
+    qt.Qt = types.SimpleNamespace()
+    qt.pyqtSignal = lambda *args, **kwargs: _Signal()
+    qt.activated_index = lambda combo: _Signal()
+    qt.activated_text = lambda combo: _Signal()
+    qt.exec_dialog = lambda dialog: dialog.exec_()
+    qt.uic = types.SimpleNamespace(loadUi=lambda *args, **kwargs: None)
+    qt.QSignalBlocker = _Widget
+    qt.QTimer = _Widget
+    qt.QStandardPaths = types.SimpleNamespace(
+        AppDataLocation="AppDataLocation",
+        writableLocation=lambda *args, **kwargs: "/tmp/loomis-head-tests",
+    )
+    for name in (
+        "QByteArray", "QCheckBox", "QColor", "QColorDialog", "QComboBox",
+        "QFileDialog", "QFormLayout", "QFrame", "QGridLayout", "QGroupBox",
+        "QHBoxLayout", "QLabel", "QPainter", "QScrollArea", "QSvgRenderer",
+        "QSlider", "QStackedWidget", "QTabWidget", "QVBoxLayout", "QWidget",
+        "QLocale",
+    ):
+        setattr(qt, name, _Widget)
+    sys.modules.setdefault("loomis_head.qt_compat", qt)
+
+    krita_stub = types.ModuleType("krita")
+    krita_stub.DockWidget = _Widget
+    krita_stub.Extension = _Widget
+    krita_stub.DockWidgetFactory = _Widget
+    krita_stub.DockWidgetFactoryBase = _Widget
+    krita_stub.Krita = types.SimpleNamespace(
+        instance=lambda: types.SimpleNamespace(activeDocument=lambda: None)
+    )
+    sys.modules.setdefault("krita", krita_stub)
+
+    import importlib
+
+    _plugin_module = importlib.import_module("loomis_head.loomis_head_plugin")
+    return _plugin_module
+
+
+class LayerTransformTests(unittest.TestCase):
+    """El Move/Transform manual se captura, se reaplica y se persiste."""
+
+    def setUp(self):
+        import tempfile
+
+        self.plugin = _plugin()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.model = LoomisHead3D()
+        self.model.set_position_x(1660.0)
+        self.model.set_position_y(447.0)
+        self.layer = _FakeLayer([])
+        self.doc = _FakeDoc(layers=[self.layer])
+        self.docker = self._make_docker(self.layer, self.model, self.doc)
+
+    def _make_docker(self, layer, model, doc, guides=True):
+        plugin = self.plugin
+        docker = object.__new__(plugin.LoomisProportionsDocker)
+        docker.doc = doc
+        docker.loomis_head = model
+        docker.loomis_layer = layer
+        docker.guides = [plugin.Guide(model, layer, "Loomis Head 1")] if guides else []
+        docker.active_index = 0
+        docker._manual_transform = plugin.IDENTITY_TRANSFORM
+        docker._pivot_shape = None
+        docker._last_pivot_position = None
+        docker._last_layer_position = None
+        docker._last_layer_bounds_center = None
+        docker._drawing = False
+        docker.update_scheduled = False
+        docker._doc_key = "unit.kra"
+        docker._state = {"version": 1, "documents": {}}
+        docker._guides_path = Path(self.tmp.name) / "guides.json"
+        docker.ui = types.SimpleNamespace(
+            positionXSpinBox=_FakeSpinBox(), positionYSpinBox=_FakeSpinBox()
+        )
+        docker._log_pivot = lambda text: None
+        docker.schedule_update = lambda: None
+        docker.ensure_guide = lambda: None
+        return docker
+
+    def _move_by(self, dx, dy):
+        """Simula la herramienta Move: la transformacion va a cada shape."""
+        for shape in self.layer.shapes():
+            shape.setTransformation(_FakeTransform(1.0, 0.0, 0.0, 1.0, dx, dy))
+
+    def test_draw_keeps_the_manual_move(self):
+        self.docker.draw_lines_with_vectors(samples=16)
+        self._move_by(120.0, 60.0)
+
+        self.docker.sync_manual_position()
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+        # El modelo (pivote) no se desplaza por el Move manual.
+        self.assertEqual((self.model.position_x, self.model.position_y), (1660.0, 447.0))
+        # X/Y visible = modelo + Move manual.
+        self.assertEqual(self.docker.ui.positionXSpinBox.value(), 1780)
+        self.assertEqual(self.docker.ui.positionYSpinBox.value(), 507)
+
+        self.docker.draw_lines_with_vectors(samples=16)
+        shapes = self.layer.shapes()
+        self.assertTrue(shapes)
+        for shape in shapes:
+            self.assertAlmostEqual(shape.transformation().dx(), 120.0)
+            self.assertAlmostEqual(shape.transformation().dy(), 60.0)
+        self.assertEqual((self.model.position_x, self.model.position_y), (1660.0, 447.0))
+        # El marcador reaplicado queda en la posicion efectiva.
+        self.assertAlmostEqual(self.docker._last_pivot_position[0], 1780.0, places=3)
+        self.assertAlmostEqual(self.docker._last_pivot_position[1], 507.0, places=3)
+        self.assertEqual(self.docker.ui.positionXSpinBox.value(), 1780)
+
+    def test_second_redraw_does_not_lose_the_manual_move(self):
+        self.docker.draw_lines_with_vectors(samples=16)
+        self._move_by(120.0, 60.0)
+        self.docker.draw_lines_with_vectors(samples=16)
+
+        # Rotacion + tipo/modelo: el siguiente dibujo no puede perder el Move.
+        self.model.set_quaternion(q_axis_angle([0.0, 1.0, 0.0], 0.6))
+        self.model.set_scale(0.7)
+        self.docker.draw_lines_with_vectors(samples=16)
+
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+        for shape in self.layer.shapes():
+            self.assertAlmostEqual(shape.transformation().dx(), 120.0)
+            self.assertAlmostEqual(shape.transformation().dy(), 60.0)
+        self.assertEqual((self.model.position_x, self.model.position_y), (1660.0, 447.0))
+        self.assertAlmostEqual(self.docker._visible_position()[0], 1780.0)
+        self.assertAlmostEqual(self.docker._visible_position()[1], 507.0)
+        self.assertEqual(self.docker.ui.positionXSpinBox.value(), 1780)
+        self.assertEqual(self.docker.ui.positionYSpinBox.value(), 507)
+
+    def test_editing_xy_moves_the_model_not_the_manual_offset(self):
+        self.docker.draw_lines_with_vectors(samples=16)
+        self._move_by(120.0, 60.0)
+        self.docker.sync_manual_position()
+
+        self.docker._set_visible_position(x=1600.0, y=400.0)
+
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+        self.assertAlmostEqual(self.model.position_x, 1480.0)
+        self.assertAlmostEqual(self.model.position_y, 340.0)
+        self.assertAlmostEqual(self.docker._visible_position()[0], 1600.0)
+        self.assertAlmostEqual(self.docker._visible_position()[1], 400.0)
+
+    def test_save_and_load_keep_the_transform(self):
+        self.docker.guides[0].manual_transform = (1.0, 0.0, 0.0, 1.0, 120.0, 60.0)
+        self.docker._manual_transform = (1.0, 0.0, 0.0, 1.0, 120.0, 60.0)
+        self.docker._save_doc_state()
+
+        saved = json.loads(Path(self.tmp.name, "guides.json").read_text(encoding="utf-8"))
+        entry = saved["documents"]["unit.kra"]["guides"][0]
+        self.assertEqual(entry["transform"], [1.0, 0.0, 0.0, 1.0, 120.0, 60.0])
+
+        other = self._make_docker(_FakeLayer([]), LoomisHead3D(), self.doc, guides=False)
+        other._load_guides(self.doc, saved["documents"]["unit.kra"])
+        self.assertEqual(len(other.guides), 1)
+        self.assertEqual(other.guides[0].manual_transform, (1.0, 0.0, 0.0, 1.0, 120.0, 60.0))
+
+    def test_entry_without_transform_loads_identity(self):
+        other = self._make_docker(_FakeLayer([]), LoomisHead3D(), self.doc, guides=False)
+        entry = {"guides": [{"name": "Loomis Head 1", "state": {"scale": 0.5}}]}
+        other._load_guides(self.doc, entry)
+        self.assertEqual(len(other.guides), 1)
+        self.assertEqual(other.guides[0].manual_transform, self.plugin.IDENTITY_TRANSFORM)
+
+    def _stub_preset_dependencies(self):
+        self.docker.trackball = types.SimpleNamespace(set_quaternion=lambda q: None)
+        self.docker._sync_ui_from_model = lambda: None
+        self.docker._sync_euler_from_model = lambda: None
+        self.docker._sync_panels_for_model = lambda *args: None
+
+    def test_preset_roundtrip_includes_the_layer_transform(self):
+        self._stub_preset_dependencies()
+        self.docker._manual_transform = (1.0, 0.0, 0.0, 1.0, -120.0, 0.0)
+        self.docker.guides[0].manual_transform = (1.0, 0.0, 0.0, 1.0, -120.0, 0.0)
+
+        captured = self.docker._capture_preset()
+        self.assertEqual(captured["layerTransform"], [1.0, 0.0, 0.0, 1.0, -120.0, 0.0])
+
+        data = dict(captured)
+        data["layerTransform"] = [1.0, 0.0, 0.0, 1.0, 40.0, -20.0]
+        self.docker.apply_preset(data)
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, 40.0, -20.0))
+        self.assertEqual(
+            self.docker.guides[0].manual_transform, (1.0, 0.0, 0.0, 1.0, 40.0, -20.0)
+        )
+
+    def test_preset_transform_survives_the_next_sync(self):
+        self.docker.draw_lines_with_vectors(samples=16)
+        self._move_by(120.0, 60.0)
+        self.docker.sync_manual_position()
+        self._stub_preset_dependencies()
+
+        self.docker.apply_preset({
+            "model": "loomis",
+            "positionUnit": "normalized",
+            "positionX": 0.5,
+            "positionY": 0.5,
+            "layerTransform": [1.0, 0.0, 0.0, 1.0, -40.0, -10.0],
+        })
+        # El sondeo de sync lee la transformacion del canvas: si el preset no se
+        # hubiera aplicado tambien ahi, el Move viejo volveria.
+        self.docker.sync_manual_position()
+
+        self.assertEqual(self.docker._manual_transform, (1.0, 0.0, 0.0, 1.0, -40.0, -10.0))
+        for shape in self.layer.shapes():
+            self.assertAlmostEqual(shape.transformation().dx(), -40.0)
+            self.assertAlmostEqual(shape.transformation().dy(), -10.0)
 
 
 if __name__ == "__main__":

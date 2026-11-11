@@ -191,10 +191,99 @@ def _fmt_point(point) -> str:
         return "None"
 
 
+# Transformacion identidad como 6 floats ``(m11, m12, m21, m22, dx, dy)``.
+# Es la forma en la que se guarda el Move/Transform manual del usuario: Krita
+# lo deja en la transformacion de cada shape, no en ``Node.position()`` (que en
+# una capa vectorial sigue en 0). Nunca se incluye la perspectiva.
+IDENTITY_TRANSFORM = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+TRANSFORM_EPSILON = 1e-6
+POSITION_EPSILON = 0.01
+# Tolerancia al comparar la transformacion capturada con la guardada: el
+# Transform tool puede dejar ruido subpixel entre lecturas.
+SAME_TRANSFORM_EPSILON = 1e-3
+
+
+def _transform_values(transform):
+    """``(m11, m12, m21, m22, dx, dy)`` de un QTransform, o ``None``.
+
+    Si el binding no expone la matriz completa se queda con la traslacion, que
+    es lo unico que aplica la herramienta Move.
+    """
+    if transform is None:
+        return None
+    try:
+        return (
+            float(transform.m11()),
+            float(transform.m12()),
+            float(transform.m21()),
+            float(transform.m22()),
+            float(transform.dx()),
+            float(transform.dy()),
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    try:
+        return (1.0, 0.0, 0.0, 1.0, float(transform.dx()), float(transform.dy()))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _normalize_transform(values):
+    """6 floats desde lista/tupla/JSON; identidad si falta o no vale."""
+    if isinstance(values, (list, tuple)) and len(values) == 6:
+        try:
+            return tuple(float(value) for value in values)
+        except (TypeError, ValueError):
+            return IDENTITY_TRANSFORM
+    return IDENTITY_TRANSFORM
+
+
+def _is_identity_transform(values) -> bool:
+    """True si la transformacion no desplaza ni escala (Move sin hacer)."""
+    m11, m12, m21, m22, dx, dy = _normalize_transform(values)
+    return (
+        abs(m11 - 1.0) <= TRANSFORM_EPSILON
+        and abs(m12) <= TRANSFORM_EPSILON
+        and abs(m21) <= TRANSFORM_EPSILON
+        and abs(m22 - 1.0) <= TRANSFORM_EPSILON
+        and abs(dx) <= POSITION_EPSILON
+        and abs(dy) <= POSITION_EPSILON
+    )
+
+
+def _same_transform(left, right) -> bool:
+    """Compara dos transformaciones de 6 floats con tolerancia subpixel."""
+    pairs = zip(_normalize_transform(left), _normalize_transform(right))
+    return all(abs(a - b) <= SAME_TRANSFORM_EPSILON for a, b in pairs)
+
+
+def _transform_from_values(values):
+    """QTransform afin desde los 6 floats; ``None`` si no hay Qt disponible."""
+    if QTransform is None:
+        return None
+    values = _normalize_transform(values)
+    try:
+        return QTransform(*values)
+    except TypeError:  # bindings sin constructor de 6 argumentos
+        matrix = QTransform()
+        try:
+            matrix.setMatrix(
+                values[0], values[1], 0.0,
+                values[2], values[3], 0.0,
+                values[4], values[5], 1.0,
+            )
+        except (AttributeError, RuntimeError, TypeError):
+            matrix.translate(values[4], values[5])
+        return matrix
+
+
 class Guide:
     """Una cabeza independiente: modelo + capa vectorial + nombre."""
 
-    __slots__ = ("model", "layer", "name", "last_center", "model_states", "pivot_shape")
+    __slots__ = (
+        "model", "layer", "name", "last_center", "model_states", "pivot_shape",
+        "manual_transform",
+    )
 
     def __init__(self, model, layer, name):
         self.model = model
@@ -207,6 +296,10 @@ class Guide:
         # Estado completo por modelo (``to_dict``), para que cambiar de Loomis
         # a Asaro y volver no pierda los campos propios de cada uno.
         self.model_states = {}
+        # Move/Transform manual del usuario, capturado de la transformacion de
+        # los shapes. Es independiente del pivote: el X/Y visible es
+        # ``model.position + dx/dy`` y el pivote del modelo sigue intacto.
+        self.manual_transform = IDENTITY_TRANSFORM
 
 
 class LoomisProportionsDocker(DockWidget):
@@ -233,12 +326,16 @@ class LoomisProportionsDocker(DockWidget):
         self._state = self._load_guides_state()
         self.update_scheduled = False
         self._last_layer_bounds_center = None
-        # Ultima posicion absoluta del marcador de pivote: fuente PRIMARIA de
-        # traslacion (delta 1:1 sobre position_x/y). El marcador es lo unico que
-        # refleja el Move completo; Node.position() solo cambia en parte.
+        # Move/Transform manual de la guia activa (m11,m12,m21,m22,dx,dy).
+        # Krita lo guarda en la transformacion de los shapes; el modelo no se
+        # mueve. El X/Y visible del docker es ``model.position + dx/dy``.
+        self._manual_transform = IDENTITY_TRANSFORM
+        # Ultima posicion absoluta del marcador de pivote. Ya no mueve el
+        # modelo: el Move se conserva en ``_manual_transform``. Se usa como
+        # referencia para el log y el siguiente dibujo.
         self._last_pivot_position = None
-        # Ultima posicion de la capa (Node.position()): respaldo cuando la capa
-        # no trae marcador (legacy/sin dibujo) o ``Node.position()`` no existe.
+        # Ultima posicion de la capa (``Node.position()``), solo para el log: en
+        # una capa vectorial no refleja el Move (sigue en 0).
         self._last_layer_position = None
         # Shape del marcador devuelto por addShapesFromSvg (se rehace en cada
         # dibujo; None equivale a "buscarlo por nombre o por caja").
@@ -474,6 +571,7 @@ class LoomisProportionsDocker(DockWidget):
             self.loomis_head = model
             self.loomis_layer = None
             self.active_index = 0
+            self._manual_transform = IDENTITY_TRANSFORM
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
@@ -484,6 +582,7 @@ class LoomisProportionsDocker(DockWidget):
         layers = self._find_guide_layers(doc)
         states = {}
         centers = {}
+        transforms = {}
         model_states = {}
         if isinstance(saved, dict):
             for item in saved.get("guides", []):
@@ -491,6 +590,9 @@ class LoomisProportionsDocker(DockWidget):
                     name = str(item["name"])
                     states[name] = item.get("state")
                     centers[name] = item.get("center")
+                    # Move/Transform manual guardado con la guia. Si falta
+                    # (documento de una version anterior) se usa la identidad.
+                    transforms[name] = _normalize_transform(item.get("transform"))
                     # Estados de los modelos inactivos (el activo esta en
                     # ``state``); si falta o no es dict, la guia arranca vacia.
                     extra = item.get("models")
@@ -570,14 +672,11 @@ class LoomisProportionsDocker(DockWidget):
                     center = (doc.width() / 2.0, doc.height() / 2.0)
                 model.set_position_x(center[0])
                 model.set_position_y(center[1])
-            # El marcador de pivote manda: si la capa lo trae, la posicion real
-            # del pivote es la del dibujo. No se recalcula por bounds (el centro
-            # del bbox depende de la rotacion y hacia derivar la cabeza).
+            # El pivote del modelo es el que se guardo (o el del marcador si no
+            # habia estado). No se adopta la posicion absoluta del marcador:
+            # ya incluye ``manual_transform`` y se sumaria dos veces. El Move
+            # manual se restaura aparte, en ``guide.manual_transform``.
             marker = _find_pivot_shape(layer)
-            pivot = _pivot_position(layer, marker)
-            if pivot is not None:
-                model.set_position_x(pivot[0])
-                model.set_position_y(pivot[1])
             current = self._center_from_layer(layer)
             guide_center = current
             if guide_center is None:
@@ -596,6 +695,7 @@ class LoomisProportionsDocker(DockWidget):
             guide = Guide(model, layer, name)
             guide.last_center = guide_center
             guide.pivot_shape = marker
+            guide.manual_transform = transforms.get(name, IDENTITY_TRANSFORM)
             guide.model_states = model_states.get(name) or {}
             self.guides.append(guide)
 
@@ -616,6 +716,7 @@ class LoomisProportionsDocker(DockWidget):
             model.from_dict(self.loomis_head.to_dict())
         model.set_position_x(doc.width() / 2.0)
         model.set_position_y(doc.height() / 2.0)
+        self._manual_transform = IDENTITY_TRANSFORM
         self.guides.append(Guide(model, layer, name))
         self._set_active_guide(len(self.guides) - 1)
         self._save_doc_state()
@@ -642,14 +743,17 @@ class LoomisProportionsDocker(DockWidget):
             self._redraw_now()
         self.active_index = index
         guide = self.guides[index]
-        # Si la capa se movio mientras esta guia estaba inactiva, el marcador
-        # del pivote lo refleja: se adopta su posicion exacta, sin bounds.
+        # Move/Transform de esta guia: se toma lo guardado y, si la capa ya
+        # tiene shapes (el usuario pudo moverla desde el docker de capas), se
+        # recaptura de su transformacion. El modelo no se toca: el pivote
+        # guardado es el logico y el manual es el offset de la herramienta.
         self._pivot_shape = guide.pivot_shape
-        pivot = _pivot_position(guide.layer, self._pivot_shape)
-        if pivot is not None:
-            guide.model.set_position_x(pivot[0])
-            guide.model.set_position_y(pivot[1])
-        self._last_pivot_position = pivot
+        self._manual_transform = _normalize_transform(guide.manual_transform)
+        captured = self._capture_manual_transform(guide.layer)
+        if captured is not None and not _same_transform(captured, self._manual_transform):
+            self._manual_transform = captured
+            guide.manual_transform = captured
+        self._last_pivot_position = _pivot_position(guide.layer, self._pivot_shape)
         self._remember_center(self._center_from_layer(guide.layer))
         self.loomis_head = guide.model
         self.loomis_layer = guide.layer
@@ -709,6 +813,7 @@ class LoomisProportionsDocker(DockWidget):
             self.loomis_head = model
             self.loomis_layer = None
             self.active_index = 0
+            self._manual_transform = IDENTITY_TRANSFORM
             self.trackball.set_model(self.loomis_head)
             self._refresh_guide_combo()
             self._sync_ui_from_model()
@@ -751,6 +856,13 @@ class LoomisProportionsDocker(DockWidget):
                 data["positionY"] = guide.model.position_y / height
                 data["positionUnit"] = "normalized"
             entry = {"name": guide.name, "state": data}
+            # Move/Transform manual de la guia (6 floats, opaco para el resto).
+            # Sin el, al reabrir el documento la cabeza volveria al pivote del
+            # modelo y se perderia el desplazamiento de la herramienta.
+            manual = guide.manual_transform
+            if guide is self.active_guide():
+                manual = self._manual_transform
+            entry["transform"] = list(_normalize_transform(manual))
             # Estados de los modelos inactivos de esta guia: el activo ya va en
             # ``state``. Copia profunda para que el JSON no comparta referencias
             # con ``guide.model_states``, que se reescribe en cada cambio.
@@ -789,6 +901,7 @@ class LoomisProportionsDocker(DockWidget):
             self.loomis_layer = None
             self._last_pivot_position = None
             self._last_layer_position = None
+            self._manual_transform = IDENTITY_TRANSFORM
             self.trackball.set_model(self.loomis_head)
             self.trackball.set_quaternion(self.loomis_head.q)
             self._sync_euler_from_model()
@@ -917,38 +1030,42 @@ class LoomisProportionsDocker(DockWidget):
     def _on_pos_x_slider(self, value: int) -> None:
         if self._slider_sync or self.loomis_head is None:
             return
-        self.loomis_head.set_position_x(value)
+        # El slider es el X/Y efectivo: se ajusta el modelo (no el Move manual).
+        self._set_visible_position(x=float(value))
         self.ui.positionXSpinBox.blockSignals(True)
-        self.ui.positionXSpinBox.setValue(value)
+        self.ui.positionXSpinBox.setValue(round(self._visible_position()[0]))
         self.ui.positionXSpinBox.blockSignals(False)
         self.posXValue.setText(f"{value} px")
-        self.schedule_update()
 
     def _on_pos_y_slider(self, value: int) -> None:
         if self._slider_sync or self.loomis_head is None:
             return
-        self.loomis_head.set_position_y(value)
+        self._set_visible_position(y=float(value))
         self.ui.positionYSpinBox.blockSignals(True)
-        self.ui.positionYSpinBox.setValue(value)
+        self.ui.positionYSpinBox.setValue(round(self._visible_position()[1]))
         self.ui.positionYSpinBox.blockSignals(False)
         self.posYValue.setText(f"{value} px")
-        self.schedule_update()
 
     def _on_pos_x_spin(self, value: int) -> None:
-        if self._slider_sync:
+        if self._slider_sync or self.loomis_head is None:
             return
-        self._slider_sync = True
-        self.posXSlider.setValue(int(value))
-        self._slider_sync = False
-        self.posXValue.setText(f"{int(value)} px")
+        # Editar X/Y pide una posicion efectiva: se compensa con el modelo.
+        self._set_visible_position(x=float(value))
+        if hasattr(self, "posXSlider"):
+            self._slider_sync = True
+            self.posXSlider.setValue(round(self._visible_position()[0]))
+            self._slider_sync = False
+            self.posXValue.setText(f"{int(value)} px")
 
     def _on_pos_y_spin(self, value: int) -> None:
-        if self._slider_sync:
+        if self._slider_sync or self.loomis_head is None:
             return
-        self._slider_sync = True
-        self.posYSlider.setValue(int(value))
-        self._slider_sync = False
-        self.posYValue.setText(f"{int(value)} px")
+        self._set_visible_position(y=float(value))
+        if hasattr(self, "posYSlider"):
+            self._slider_sync = True
+            self.posYSlider.setValue(round(self._visible_position()[1]))
+            self._slider_sync = False
+            self.posYValue.setText(f"{int(value)} px")
 
     def _on_rot_slider(self, *_args) -> None:
         if self._slider_sync or self.loomis_head is None:
@@ -968,14 +1085,16 @@ class LoomisProportionsDocker(DockWidget):
     def _sync_transform_sliders(self) -> None:
         if self.loomis_head is None or not hasattr(self, "posXSlider"):
             return
+        # Los sliders de posicion muestran el X/Y efectivo (modelo + Move).
+        visible_x, visible_y = self._visible_position()
         self._slider_sync = True
-        self.posXSlider.setValue(round(self.loomis_head.position_x))
-        self.posYSlider.setValue(round(self.loomis_head.position_y))
+        self.posXSlider.setValue(round(visible_x))
+        self.posYSlider.setValue(round(visible_y))
         self.rotXSlider.setValue(self.ui.rotXSpin.value())
         self.rotYSlider.setValue(self.ui.rotYSpin.value())
         self.rotZSlider.setValue(self.ui.rotZSpin.value())
-        self.posXValue.setText(f"{round(self.loomis_head.position_x)} px")
-        self.posYValue.setText(f"{round(self.loomis_head.position_y)} px")
+        self.posXValue.setText(f"{round(visible_x)} px")
+        self.posYValue.setText(f"{round(visible_y)} px")
         self.rotXValue.setText(f"{self.ui.rotXSpin.value()}°")
         self.rotYValue.setText(f"{self.ui.rotYSpin.value()}°")
         self.rotZValue.setText(f"{self.ui.rotZSpin.value()}°")
@@ -1489,10 +1608,9 @@ class LoomisProportionsDocker(DockWidget):
     def _layer_position(self):
         """``(x, y)`` de la capa en el documento (``Node.position()``), o ``None``.
 
-        Solo respaldo: en Krita 5.3.4 el Move real cambia esta posicion mucho
-        menos que el contenido (medido: +116/+161 de capa frente a +486/+588
-        del marcador) y la rotacion la devuelve cerca del pivote. La fuente
-        buena del desplazamiento es el marcador ``loomis-pivot``.
+        Solo diagnostico: en Krita 5.3.4 una capa vectorial mantiene esta
+        posicion en 0 aunque se mueva con Move/Transform; el desplazamiento real
+        vive en la transformacion de los shapes (``_manual_transform``).
         """
         if not self.loomis_layer:
             return None
@@ -1511,127 +1629,187 @@ class LoomisProportionsDocker(DockWidget):
         except (TypeError, ValueError, IndexError, KeyError):
             return None
 
-    def _reset_layer_transform(self) -> bool:
-        """Limpia la traslacion/transformacion que dejo el Move antes de dibujar.
+    def _capture_manual_transform(self, layer=None):
+        """Move/Transform manual leido de la transformacion de los shapes.
 
-        Si solo se borran los shapes y se anade el SVG en ``position_x/y``, el
-        offset del Move (en la capa o en la transformacion de cada shape) se
-        suma otra vez y la cabeza sale a medio camino. Se neutraliza con lo que
-        expone la API:
-
-          * ``Shape.setTransformation(QTransform())`` en cada shape (el
-            Transform tool puede guardar el desplazamiento ahi);
-          * ``Node.move(0, 0)`` para devolver la capa al origen del documento.
-
-        Devuelve ``True`` si se pudo aplicar al menos un reset. Sin documento o
-        sin capa no hace nada (la preview no pasa por aqui).
+        Krita escribe el desplazamiento de la herramienta en
+        ``Shape.transformation()``; ``Node.position()`` de una capa vectorial
+        sigue en 0 y no lo refleja. Se excluye el marcador del pivote (se
+        recrea en cada dibujo y no aporta). Devuelve la transformacion mas
+        comun como 6 floats, o ``None`` si la capa no tiene shapes de dibujo
+        (asi no se pisa una transformacion guardada con una capa vacia).
         """
-        if not self.doc or not self.loomis_layer:
+        layer = layer if layer is not None else self.loomis_layer
+        if layer is None:
+            return None
+        try:
+            shapes = list(layer.shapes())
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+        counts = {}
+        found = False
+        for shape in shapes:
+            if _is_pivot_shape(shape):
+                continue
+            try:
+                values = _transform_values(shape.transformation())
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            if values is None:
+                continue
+            found = True
+            if _is_identity_transform(values):
+                continue
+            key = tuple(round(value, 4) for value in values)
+            counts[key] = counts.get(key, 0) + 1
+        if not found:
+            return None
+        if not counts:
+            return IDENTITY_TRANSFORM
+        return max(counts.items(), key=lambda item: item[1])[0]
+
+    def _apply_manual_transform(self, values, shapes=None) -> bool:
+        """Reaplica el Move/Transform a los shapes (todos por defecto).
+
+        La transformacion manual se conserva entre redibujos: no se resetea a
+        identidad. Devuelve ``True`` si se aplico a algun shape.
+        """
+        values = _normalize_transform(values)
+        if _is_identity_transform(values):
             return False
-        reset = False
+        if shapes is None:
+            try:
+                shapes = list(self.loomis_layer.shapes()) if self.loomis_layer else []
+            except (AttributeError, RuntimeError, TypeError):
+                shapes = []
+        applied = False
+        for shape in shapes:
+            matrix = _transform_from_values(values)
+            if matrix is None:
+                break
+            try:
+                shape.setTransformation(matrix)
+                applied = True
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+        return applied
+
+    def _set_shapes_identity(self) -> bool:
+        """Devuelve los shapes a identidad (solo en un reset explicito)."""
+        if QTransform is None or not self.loomis_layer:
+            return False
         try:
             shapes = list(self.loomis_layer.shapes())
         except (AttributeError, RuntimeError, TypeError):
-            shapes = []
-        if QTransform is not None:
-            for shape in shapes:
-                try:
-                    shape.setTransformation(QTransform())
-                    reset = True
-                except (AttributeError, RuntimeError, TypeError):
-                    continue
-        try:
-            self.loomis_layer.move(0, 0)
-            reset = True
-        except (AttributeError, RuntimeError, TypeError):
-            pass
+            return False
+        reset = False
+        for shape in shapes:
+            try:
+                shape.setTransformation(QTransform())
+                reset = True
+            except (AttributeError, RuntimeError, TypeError):
+                continue
         return reset
 
+    def _manual_transform_offset(self):
+        """``(dx, dy)`` del Move/Transform manual de la guia activa."""
+        values = _normalize_transform(
+            getattr(self, "_manual_transform", IDENTITY_TRANSFORM)
+        )
+        return values[4], values[5]
+
+    def _visible_position(self):
+        """X/Y que muestra la herramienta: pivote del modelo + Move manual."""
+        if self.loomis_head is None:
+            return (0.0, 0.0)
+        dx, dy = self._manual_transform_offset()
+        return (self.loomis_head.position_x + dx, self.loomis_head.position_y + dy)
+
+    def _refresh_visible_position(self) -> None:
+        """Escribe el X/Y efectivo en los spinboxes (sin disparar senales)."""
+        ui = getattr(self, "ui", None)
+        if ui is None or self.loomis_head is None:
+            return
+        visible_x, visible_y = self._visible_position()
+        for name, value in (
+            ("positionXSpinBox", round(visible_x)),
+            ("positionYSpinBox", round(visible_y)),
+        ):
+            widget = getattr(ui, name, None)
+            if widget is None:
+                continue
+            try:
+                if int(widget.value()) == int(value):
+                    continue
+                widget.blockSignals(True)
+                widget.setValue(int(value))
+                widget.blockSignals(False)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+        if hasattr(self, "posXSlider") and (
+            self.posXSlider.value() != round(visible_x)
+            or self.posYSlider.value() != round(visible_y)
+        ):
+            self._sync_transform_sliders()
+
+    def _set_visible_position(self, x=None, y=None) -> None:
+        """Lleva el X/Y visible al valor pedido moviendo el modelo.
+
+        El Move manual no se toca (es el offset de la herramienta): se
+        desplaza el pivote por la diferencia, de modo que
+        ``modelo + manual`` cae exactamente en ``x``/``y``.
+        """
+        if self.loomis_head is None:
+            return
+        visible_x, visible_y = self._visible_position()
+        if x is not None:
+            self.loomis_head.set_position_x(
+                self.loomis_head.position_x + (float(x) - visible_x)
+            )
+        if y is not None:
+            self.loomis_head.set_position_y(
+                self.loomis_head.position_y + (float(y) - visible_y)
+            )
+        self.schedule_update()
+
     def sync_manual_position(self):
-        """Mueve X/Y con el lienzo segun el marcador de pivote (1:1).
+        """Adopta el Move/Transform de la capa sin mover el modelo.
 
-        Orden de fuentes:
-          1. Marcador ``loomis-pivot`` (delta >= 0.5 px). Es la unica fuente
-             fiable del Move: ``Node.position()`` no lo refleja entero (medido
-             en Krita 5.3.4: +116/+161 de capa frente a +486/+588 del marcador)
-             y al rotar la capa vuelve cerca del pivote. Se aplica **una sola
-             vez** y en esa pasada no se suma tambien el delta de la capa.
-          2. ``Node.position()`` de la capa, **solo como respaldo** cuando no
-             hay marcador (documento legacy, capa sin dibujo).
-          3. Ninguno: no se toca nada (nunca bounds, que deriva al rotar).
+        Krita deja el desplazamiento manual en la transformacion de los shapes
+        (``Shape.transformation()``); ``Node.position()`` de una capa vectorial
+        no lo refleja y ``Node.bounds()`` deriva al rotar. Aqui solo se captura
+        esa transformacion y se guarda en la guia: el pivote del modelo no se
+        toca, y el X/Y del docker pasa a ser la posicion efectiva
+        (``modelo + dx/dy``), que es el "Position" de la herramienta.
 
-        El delta se aplica a ``position_x/position_y`` (que son el pivote) sin
-        dividir ni convertir: mover +100 mueve X/Y +100.
+        No se redibuja: la herramienta esta moviendo los shapes actuales y el
+        canvas se reconstruye en el siguiente ``draw`` (Input Delay), donde la
+        transformacion se reaplica a los shapes nuevos.
         """
         if (not self.doc or not self.loomis_layer or not self.loomis_head
                 or self._drawing):
             return
 
-        marker = _pivot_position(self.loomis_layer, self._pivot_shape)
-        layer_pos = self._layer_position()
+        captured = self._capture_manual_transform()
+        if captured is not None and not _same_transform(captured, self._manual_transform):
+            previous = _normalize_transform(self._manual_transform)
+            self._manual_transform = captured
+            guide = self.active_guide()
+            if guide is not None:
+                guide.manual_transform = captured
+            self._log_pivot(
+                f"sync transform old={previous} new={captured}"
+                f" pos={self.loomis_head.position_x:.1f},"
+                f"{self.loomis_head.position_y:.1f}"
+            )
+            self._remember_center(self._layer_bounds_center())
+            if hasattr(self, "_state_timer"):
+                self._state_timer.start()
 
-        dx = dy = 0.0
-        source = None
-        if marker is not None and self._last_pivot_position is not None:
-            marker_dx = marker[0] - self._last_pivot_position[0]
-            marker_dy = marker[1] - self._last_pivot_position[1]
-            if abs(marker_dx) >= 0.5 or abs(marker_dy) >= 0.5:
-                dx, dy = marker_dx, marker_dy
-                source = "marker"
-        if (source is None and layer_pos is not None
-                and self._last_layer_position is not None):
-            layer_dx = layer_pos[0] - self._last_layer_position[0]
-            layer_dy = layer_pos[1] - self._last_layer_position[1]
-            # Ignora ruido subpixel (redondeo de QPoint en la capa).
-            if abs(layer_dx) >= 0.5 or abs(layer_dy) >= 0.5:
-                dx, dy = layer_dx, layer_dy
-                source = "layer"
-
-        if source is None:
-            # Sin cambios: solo se refrescan las referencias disponibles (una
-            # primera lectura tras cargar no debe mover la cabeza).
-            if layer_pos is not None:
-                self._last_layer_position = layer_pos
-            if marker is not None:
-                self._last_pivot_position = marker
-            return
-
-        pos_before = (self.loomis_head.position_x, self.loomis_head.position_y)
-        last_layer_before = self._last_layer_position
-        last_marker_before = self._last_pivot_position
-        self.loomis_head.set_position_x(self.loomis_head.position_x + dx)
-        self.loomis_head.set_position_y(self.loomis_head.position_y + dy)
-        x_blocker = QSignalBlocker(self.ui.positionXSpinBox)
-        y_blocker = QSignalBlocker(self.ui.positionYSpinBox)
-        self.ui.positionXSpinBox.setValue(round(self.loomis_head.position_x))
-        self.ui.positionYSpinBox.setValue(round(self.loomis_head.position_y))
-        del x_blocker, y_blocker
-        self._sync_transform_sliders()
-        # Do not redraw here: allow Krita's active tool to finish moving the
-        # existing shapes. The next Loomis control change uses the synced X/Y.
-        #
-        # Referencias nuevas: se vuelven a leer ya con el delta aplicado (la
-        # capa no cambia al mover el modelo; el marcador si, en el siguiente
-        # draw). Se registran ambas para no volver a sumar lo mismo.
-        fresh_layer = self._layer_position()
-        if fresh_layer is None:
-            fresh_layer = layer_pos
-        self._last_layer_position = fresh_layer
-        fresh_marker = _pivot_position(self.loomis_layer, self._pivot_shape)
-        if fresh_marker is None:
-            fresh_marker = marker
-        self._last_pivot_position = fresh_marker
-        self._log_pivot(
-            f"sync source={source} layer={_fmt_point(layer_pos)}"
-            f" last_layer={_fmt_point(last_layer_before)}"
-            f" marker={_fmt_point(marker)} last_marker={_fmt_point(last_marker_before)}"
-            f" dx={dx:.1f} dy={dy:.1f} pos_before="
-            f"{pos_before[0]:.1f},{pos_before[1]:.1f} pos_after="
-            f"{self.loomis_head.position_x:.1f},{self.loomis_head.position_y:.1f}"
-        )
-        self._remember_center(self._layer_bounds_center())
-        if hasattr(self, "_state_timer"):
-            self._state_timer.start()
+        # Referencias para el siguiente draw; el marcador ya incluye el Move.
+        self._last_pivot_position = _pivot_position(self.loomis_layer, self._pivot_shape)
+        self._last_layer_position = self._layer_position()
+        self._refresh_visible_position()
 
     def _redraw_now(self, *_args) -> None:
         """Flush a pending redraw at once (slider released)."""
@@ -1656,23 +1834,21 @@ class LoomisProportionsDocker(DockWidget):
             self.update_scheduled = False
             return
 
-        # Antes de leer cualquier posicion: si el usuario movio la capa con
-        # Move/Transform, el marcador esta desplazado y X/Y siguen viejos. Se
-        # adopta el delta 1:1 del marcador para que build_svg y el marcador
-        # nuevo se creen donde el usuario lo dejo.
+        # Antes de borrar nada: el Move/Transform deja el desplazamiento en la
+        # transformacion de los shapes. Se captura para reaplicarlo a los
+        # shapes nuevos; el modelo (pivote) no se mueve por eso.
         self.sync_manual_position()
         prev_layer = self._last_layer_position
         prev_marker = self._last_pivot_position
+        captured = self._capture_manual_transform()
+        if captured is not None:
+            self._manual_transform = captured
+            guide = self.active_guide()
+            if guide is not None:
+                guide.manual_transform = captured
 
         self._drawing = True
         try:
-            # El Move deja un offset en la capa y/o en la transformacion de los
-            # shapes. Se limpia ANTES de borrar/crear: si no, el SVG nuevo se
-            # suma a ese offset y la cabeza queda a medio camino.
-            reset_before = self._layer_position()
-            self._reset_layer_transform()
-            reset_after = self._layer_position()
-
             svg = self.loomis_head.build_svg(
                 width=self.doc.width(),
                 height=self.doc.height(),
@@ -1691,23 +1867,28 @@ class LoomisProportionsDocker(DockWidget):
                 added = list(self.loomis_layer.addShapesFromSvg(svg) or [])
             except (AttributeError, RuntimeError, TypeError):
                 added = []
+            # El Move manual se reaplica a TODO lo nuevo, marcador incluido:
+            # asi su posicion absoluta queda donde el usuario lo dejo y no se
+            # pierde al rotar/cambiar el modelo.
+            reapplied = self._apply_manual_transform(self._manual_transform, added)
             self._pivot_shape = next(
                 (shape for shape in reversed(added) if _is_pivot_shape(shape)), None
             )
             # El marcador recien creado es la nueva referencia de posicion: se
             # lee su centro en el documento (no el bbox de la capa, que cambia
-            # al rotar) para que el siguiente movimiento manual sea 1:1. La
-            # posicion de la capa (respaldo) queda en 0 tras el reset.
+            # al rotar).
             self._last_pivot_position = _pivot_position(
                 self.loomis_layer, self._pivot_shape
             )
             self._last_layer_position = self._layer_position()
             self._last_layer_bounds_center = self._layer_bounds_center()
+            visible_x, visible_y = self._visible_position()
             self._log_pivot(
                 f"draw pos={self.loomis_head.position_x:.1f},"
                 f"{self.loomis_head.position_y:.1f}"
-                f" reset_layer_before={_fmt_point(reset_before)}"
-                f" reset_layer_after={_fmt_point(reset_after)}"
+                f" visible={visible_x:.1f},{visible_y:.1f}"
+                f" manual={_normalize_transform(self._manual_transform)}"
+                f" reapplied={reapplied}"
                 f" layer={_fmt_point(self._last_layer_position)}"
                 f" marker={_fmt_point(self._last_pivot_position)}"
                 f" last_layer={_fmt_point(prev_layer)}"
@@ -1717,6 +1898,8 @@ class LoomisProportionsDocker(DockWidget):
             if guide is not None:
                 guide.last_center = self._last_layer_bounds_center
                 guide.pivot_shape = self._pivot_shape
+            # El X/Y del docker es la posicion efectiva (modelo + Move manual).
+            self._refresh_visible_position()
         except (AttributeError, RuntimeError, TypeError):
             self._last_pivot_position = None
             self._last_layer_position = None
@@ -1729,10 +1912,11 @@ class LoomisProportionsDocker(DockWidget):
     def _with_pivot_marker(self, svg: str) -> str:
         """Anade al SVG el marcador invisible del pivote (1 px, id fijo).
 
-        El pivote es ``position_x/position_y`` en el documento, asi que el
-        marcador se dibuja ahi mismo. No cambia el render: sin relleno visible
-        ni trazo (``fill-opacity=0``), y su caja de 1 px queda dentro de la
-        cabeza. Se usa para leer la posicion real cuando el usuario mueve la
+        El pivote del modelo es ``position_x/position_y``, asi que el marcador
+        se dibuja ahi mismo; al reaplicarle el Move/Transform manual queda en la
+        posicion efectiva (la que muestra X/Y). No cambia el render: sin relleno
+        visible ni trazo (``fill-opacity=0``), y su caja de 1 px queda dentro de
+        la cabeza. Se usa para leer la posicion real cuando el usuario mueve la
         capa con Move/Transform.
         """
         if self.loomis_head is None or not svg.endswith("</svg>"):
@@ -1753,16 +1937,26 @@ class LoomisProportionsDocker(DockWidget):
         self.schedule_update()
 
     def reset_position(self):
-        """Return the guide to the center of the current document without changing other settings."""
+        """Center the guide and drop the manual Move/Transform offset."""
         center_x = self.doc.width() // 2 if self.doc else 0
         center_y = self.doc.height() // 2 if self.doc else 0
+        # Reset explicito: ademas de centrar el pivote, se descarta el Move
+        # manual. Si no se limpiara tambien en los shapes actuales, el sync
+        # siguiente lo volveria a capturar antes de que el canvas se redibuje.
+        self._manual_transform = IDENTITY_TRANSFORM
+        guide = self.active_guide()
+        if guide is not None:
+            guide.manual_transform = IDENTITY_TRANSFORM
+        self._set_shapes_identity()
+        # Si el Move acabo en la capa (Node.move) y no en los shapes, tambien se
+        # devuelve al origen: es un reset explicito del usuario.
+        try:
+            self.loomis_layer.move(0, 0)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
         self.loomis_head.set_position_x(center_x)
         self.loomis_head.set_position_y(center_y)
-        x_blocker = QSignalBlocker(self.ui.positionXSpinBox)
-        y_blocker = QSignalBlocker(self.ui.positionYSpinBox)
-        self.ui.positionXSpinBox.setValue(center_x)
-        self.ui.positionYSpinBox.setValue(center_y)
-        del x_blocker, y_blocker
+        self._refresh_visible_position()
         self.schedule_update()
 
     def reset_settings(self):
@@ -2065,6 +2259,10 @@ class LoomisProportionsDocker(DockWidget):
             data["positionUnit"] = "normalized"
         else:
             data["positionUnit"] = "pixels"
+        # Move/Transform manual del canvas, en el mismo bloque que el resto de
+        # la cabeza. Es opaco para el Grimorio de Color y para las versiones
+        # anteriores: si falta al cargar, se usa la identidad.
+        data["layerTransform"] = list(_normalize_transform(self._manual_transform))
         return data
 
     def _save_preset(self) -> None:
@@ -2093,6 +2291,19 @@ class LoomisProportionsDocker(DockWidget):
         if target != self._current_model_id():
             self._switch_model(target)
         self.loomis_head.from_dict(data)
+        # Move/Transform manual del preset (opcional, opaco). Se aplica tambien
+        # a los shapes actuales: si no, el sondeo de sync lo volveria a capturar
+        # del canvas viejo antes de que llegue el redibujo.
+        layer_transform = _normalize_transform(data.get("layerTransform"))
+        self._manual_transform = layer_transform
+        guide = self.active_guide()
+        if guide is not None:
+            guide.manual_transform = layer_transform
+        if self.loomis_layer is not None:
+            if _is_identity_transform(layer_transform):
+                self._set_shapes_identity()
+            else:
+                self._apply_manual_transform(layer_transform)
         doc, width, height = self._doc_size()
         normalized = data.get("positionUnit") == "normalized"
         nx = float(data.get("positionX", 0.5)) if normalized else 0.5
@@ -2124,8 +2335,9 @@ class LoomisProportionsDocker(DockWidget):
         put(self.ui.chinWidthSlider, round(self.loomis_head.chin_width * 100))
         put(self.ui.frontStrokeSlider, round(self.loomis_head.front_line_stroke))
         put(self.ui.backStrokeSlider, round(self.loomis_head.back_line_stroke))
-        put(self.ui.positionXSpinBox, round(self.loomis_head.position_x))
-        put(self.ui.positionYSpinBox, round(self.loomis_head.position_y))
+        visible_x, visible_y = self._visible_position()
+        put(self.ui.positionXSpinBox, round(visible_x))
+        put(self.ui.positionYSpinBox, round(visible_y))
         for widget, value in (
             (self.ui.showFace, self.loomis_head.show_face),
             (self.ui.showArrow, self.loomis_head.show_arrow),
@@ -2220,6 +2432,10 @@ class LoomisProportionsDocker(DockWidget):
             return
         data = dict(data)
         data["model"] = model
+        # ``layerTransform`` viaja dentro del bloque ``head``; se acepta tambien
+        # en la raiz del fichero por si lo escribio otra herramienta.
+        if "layerTransform" not in data and isinstance(raw.get("layerTransform"), list):
+            data["layerTransform"] = raw["layerTransform"]
         self.apply_preset(data)
         self.ui.presetStatus.setText(t("status.head_loaded", name=Path(path).name))
 
