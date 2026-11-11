@@ -227,3 +227,28 @@ Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator
 - **Warning — local build**: 0.7.4 is **local only**. There is **no 0.7.4 ZIP or patch**;
   the public ZIP ships only after validating this build in Krita. `release/` still holds
   the **0.7.2** artifacts, which remain the last public build.
+
+## 0.7.5 — 2026-11-11
+
+- **Fix B→C: el sync del pivote va antes del redibujo** (`draw_lines_with_vectors`).
+  Redibujar borra los shapes y crea uno nuevo en `(position_x, position_y)`; si el usuario
+  había movido la capa con Move/Transform y X/Y seguían viejos, el canvas volvía a la
+  posición anterior en cuanto se tocaba cualquier control del docker (B→C roto). Ahora el
+  método llama `sync_manual_position()` **antes** de borrar y crear, así que el marcador se
+  adopta y el SVG nuevo se dibuja donde está el usuario. Aplica también al redibujo que
+  dispara el debounce, el cambio de modelo y el de tipo/sexo.
+- **Input Delay**: nuevo `QSpinBox` **Delay** (0–5000 ms, paso 50, sufijo `ms`, default
+  **500**) bajo **Vista**, en la fila del selector de vista. Guarda `redrawDelay` en
+  `settings.json` y cambia el intervalo del timer del canvas en caliente; `0` redibuja en
+  cuanto se suelta y los valores altos agrupan más cambios en una sola entrada de undo. El
+  valor se fija con clamp (`_clamp_delay`) y el arranque no reescribe el archivo.
+- **Sin flush en `sliderReleased`**: soltar un slider ya no fuerza un redibujo inmediato; el
+  retardo configurado manda y se respeta. La preview del docker (`trackball.update()`) sigue
+  en vivo en cada `valueChanged`.
+- **Tests**: **121** unit tests (44 generador + 77 Asaro) en verde; `test_draw_sync.py`
+  (32 checks, incluido sync-antes-del-draw), `test_dashboard_070.py`, `check_neck_ui.py`,
+  `check_shade_planes_ui.py` y `check_pivot_marker.py` PASS. Sin cubrir todavía: el
+  marcador bajo undo y un Move real de canvas (necesitan documento de Krita).
+- **Aviso — build local**: 0.7.5 es **solo local**. No hay **ZIP ni patch 0.7.5**; el ZIP
+  público se genera solo después de validar este build en Krita. `release/` sigue con los
+  artefactos **0.7.2**, que son la última build pública (0.7.3, 0.7.4 y 0.7.5 son locales).

@@ -41,10 +41,13 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   after the pending fixes).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
-- **Pivot and redraw (0.7.4)**: the head rotates around an invisible pivot at the centre of
-  the skull, so rotating or switching model/type/sex keeps it in place; an invisible
-  `loomis-pivot` marker follows manual canvas moves and syncs them to X/Y 1:1. The docker
-  preview is live while you drag, and the vector layer redraws 500 ms after you stop.
+- **Pivot and redraw (0.7.4, delay in 0.7.5)**: the head rotates around an invisible pivot at
+  the centre of the skull, so rotating or switching model/type/sex keeps it in place; an
+  invisible `loomis-pivot` marker follows manual canvas moves and syncs them to X/Y 1:1. The
+  pivot is synced **before** every redraw, so touching the docker no longer sends the head
+  back to its old X/Y. The docker preview is live while you drag, and the vector layer
+  redraws after you stop; the **Delay** spinbox under View sets that wait (0–5000 ms, 500 by
+  default).
 - **Individual axes**: X/Y/Z rotation sliders and spinboxes; moving one axis does not
   touch the others.
 - **Loomis construction**: sphere, side cut, jaw, chin, cheekbones, brow/eye/nose/mouth
@@ -83,8 +86,8 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 and 0.7.4 are
-   local-only).
+1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3, 0.7.4 and 0.7.5
+   are local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -109,8 +112,9 @@ simulated, not run on a real Krita 6.
 
 Krita 5.3.4's Python API does not expose `beginUndo`/`endUndo` or `KUndo2Command`, so the
 plugin cannot group a redraw into one undo step. As a mitigation the vector layer redraws
-500 ms after the last change and flushes when a slider is released, which keeps a drag to a
-few undo entries instead of dozens. A real single-step undo needs C++ and is tracked as debt.
+only after the **Delay** set in the panel (500 ms by default, no flush when a slider is
+released), which keeps a drag to a few undo entries instead of dozens. A real single-step
+undo needs C++ and is tracked as debt.
 
 ## Languages
 
@@ -196,7 +200,7 @@ every silhouette is a chain of segments. Use it to place planes, then draw over 
 > retopologised derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), whose design is by
 > **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 > the full text and a copy-paste credit line are in
-> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.4
+> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.5
 > is a **local build**: the public ZIP ships only after validating it in Krita; until then
 > `release/` carries the 0.7.2 artifacts, the last public build.
 

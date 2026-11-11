@@ -72,9 +72,9 @@ enums PyQt6 removed (`Qt.Horizontal` → `Qt.Orientation.Horizontal`, `QSizePoli
 - **License**: the code is **GPL-3.0-only**; the Asaro meshes are **CC BY 4.0**, not GPL —
   derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), design by **John Asaro**;
   "Simple Asaro Head" by **fabianoaraujo** (CC BY 4.0) reviewed and not used. Attribution
-  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.4
+  and modification notice travel with the mesh (`LICENSE-ASSETS.md`, `CREDITS.md`). 0.7.5
   is a **local build**: no public ZIP or patch until it is validated in Krita; `release/`
-  keeps the 0.7.2 artifacts, the last public build.
+  keeps the 0.7.2 artifacts, the last public build (0.7.3, 0.7.4 and 0.7.5 are local).
 - The docker adds a **Model** combo and a `QStackedWidget`: page 0 is `FeaturePanel`, page 1
   is `AsaroPanel` (planes, edges, shade, neck, detail). For Asaro the Guides and Hair tabs are
   disabled and the Loomis-only Settings rows (side cut, face age, chin width) are hidden.
@@ -107,9 +107,17 @@ Settings rows are hidden.
   canvas move is therefore applied **1:1** to `position_x/y` once, the spinboxes update and
   nothing is redrawn. Without a marker (legacy load) it skips the sync and waits for the next
   draw, so there is no drift.
-- The canvas redraws **500 ms** after the last change (`REDRAW_INTERVAL_MS`, single-shot
-  timer restarted by every slider/spin/rotation change); the docker preview runs live.
-  `valueChanged` only updates the preview; `sliderReleased` flushes immediately.
+- **Sync before the draw (0.7.5)**: `draw_lines_with_vectors()` calls `sync_manual_position()`
+  **first**, before removing and recreating the shapes. The redraw builds the SVG at
+  `(position_x, position_y)`, so without that call touching any docker control would snap a
+  manually moved head back to its old X/Y (the B→C regression). It covers the debounced
+  redraw, model switches and type/sex changes.
+- The canvas redraws after the **Input Delay** (`redrawDelay` in `settings.json`): a
+  `QSpinBox` **Delay** under View, 0–5000 ms in 50 ms steps, default `REDRAW_INTERVAL_MS`
+  (500 ms). The single-shot timer restarts on every slider/spin/rotation change and its
+  interval changes live when the spinbox changes; the docker preview runs live.
+  `valueChanged` only updates the preview and `sliderReleased` does **not** flush: the delay
+  always wins.
 
 ## Head structure
 
