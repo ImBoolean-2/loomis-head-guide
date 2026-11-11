@@ -106,6 +106,8 @@
   "error.bad_head": "That file is not a valid Loomis head.",
   "error.head_model": "That head uses another model: {model}",
   "view.label": "View",
+  "delay.label": "Delay",
+  "delay.tooltip": "Wait with no changes before redrawing the canvas. The docker preview stays live.",
   "view.front": "Front",
   "view.three_quarter": "3/4",
   "view.profile": "Profile",

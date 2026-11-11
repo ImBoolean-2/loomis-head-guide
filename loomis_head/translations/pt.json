@@ -104,6 +104,8 @@
   "features.mouth": "Curva de boca",
   "features.close": "Fechar",
   "view.label": "Vista",
+  "delay.label": "Atraso",
+  "delay.tooltip": "Espera sem alterações antes de redesenhar a tela. A pré-visualização do docker continua ao vivo.",
   "view.front": "Frontal",
   "view.three_quarter": "3/4",
   "view.profile": "Perfil",

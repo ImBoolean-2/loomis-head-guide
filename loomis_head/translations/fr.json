@@ -104,6 +104,8 @@
   "features.mouth": "Courbe de bouche",
   "features.close": "Fermer",
   "view.label": "Vue",
+  "delay.label": "Délai",
+  "delay.tooltip": "Attente sans modification avant de redessiner le canevas. L'aperçu du docker reste en direct.",
   "view.front": "Face",
   "view.three_quarter": "3/4",
   "view.profile": "Profil",

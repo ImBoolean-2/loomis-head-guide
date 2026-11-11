@@ -46,6 +46,9 @@ try:
 except AttributeError:  # pragma: no cover - bindings sin QtCore expuesto
     QPointF = None
 
+# ``QSpinBox`` tampoco se reexporta en qt_compat; mismo binding, mismo motivo.
+QSpinBox = qt_compat.QtWidgets.QSpinBox
+
 from . import i18n
 from .features_dialog import AsaroPanel, FeaturePanel, HairPanel
 from .preview import HeadPreviewWidget
@@ -68,6 +71,20 @@ PIVOT_SHAPE_NAME = "loomis-pivot"
 # Debounce del canvas: solo se redibuja al parar (500 ms sin cambios). La
 # preview del docker sigue en vivo en cada ``valueChanged``.
 REDRAW_INTERVAL_MS = 500
+# Rango del "Input Delay" del docker (ms). 0 = redibujo inmediato al soltar;
+# el valor se guarda en settings.json como ``redrawDelay``.
+DELAY_MIN_MS = 0
+DELAY_MAX_MS = 5000
+DELAY_STEP_MS = 50
+
+
+def _clamp_delay(value) -> int:
+    """Entero de ms dentro del rango del spinbox; el default si no es valido."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return REDRAW_INTERVAL_MS
+    return max(DELAY_MIN_MS, min(DELAY_MAX_MS, number))
 
 
 def _map_shape_point(shape, x: float, y: float):
@@ -245,14 +262,16 @@ class LoomisProportionsDocker(DockWidget):
         self.position_sync_timer.timeout.connect(self.sync_manual_position)
         self.position_sync_timer.start()
 
-        # El canvas solo se redibuja al parar: 500 ms sin cambios. Krita 5.3.4
-        # no expone beginUndo/endUndo (ni KUndo2Command) a Python, asi que cada
-        # addShapesFromSvg deja su propia entrada de undo; espaciar los
-        # redibujos es la unica mitigacion desde el plugin. La preview del
+        # El canvas solo se redibuja al parar: Input Delay (500 ms por defecto).
+        # Krita 5.3.4 no expone beginUndo/endUndo (ni KUndo2Command) a Python,
+        # asi que cada addShapesFromSvg deja su propia entrada de undo; espaciar
+        # los redibujos es la unica mitigacion desde el plugin. La preview del
         # docker (trackball) se repinta en vivo en cada cambio.
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
-        self._redraw_timer.setInterval(REDRAW_INTERVAL_MS)
+        self._redraw_timer.setInterval(
+            _clamp_delay(self._settings.get("redrawDelay", REDRAW_INTERVAL_MS))
+        )
         self._redraw_timer.timeout.connect(self.draw_lines_with_vectors)
 
         self._state_timer = QTimer(self)
@@ -825,9 +844,8 @@ class LoomisProportionsDocker(DockWidget):
         self.ui.positionYSpinBox.valueChanged.connect(self._on_pos_y_spin)
         for slider in (self.rotXSlider, self.rotYSlider, self.rotZSlider):
             slider.valueChanged.connect(self._on_rot_slider)
-        for slider in (self.posXSlider, self.posYSlider,
-                       self.rotXSlider, self.rotYSlider, self.rotZSlider):
-            slider.sliderReleased.connect(self._redraw_now)
+        # Sin flush al soltar: el desplazamiento se respeta y el canvas se
+        # redibuja solo cuando expira ``_redraw_timer`` (Input Delay).
         return group
 
     def _refresh_transform_ranges(self) -> None:
@@ -969,6 +987,9 @@ class LoomisProportionsDocker(DockWidget):
             self.language_group.setTitle(t("language.section"))
             self.languageLabel.setText(t("language.label"))
             self.languageCombo.setItemText(0, t("language.auto"))
+        if hasattr(self, "delayLabel"):
+            self.delayLabel.setText(t("delay.label"))
+            self.delaySpin.setToolTip(t("delay.tooltip"))
         if hasattr(self.ui, "viewCombo"):
             current = self.ui.viewCombo.currentIndex()
             self.ui.viewCombo.blockSignals(True)
@@ -1022,17 +1043,9 @@ class LoomisProportionsDocker(DockWidget):
             lambda v: self.with_schedule_update(lambda: self.loomis_head.set_front_line_stroke(v))
         )
         self.ui.backStrokeSlider.valueChanged.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_back_line_stroke(v)))
-        # Releasing a canvas slider redraws at once instead of waiting out the
-        # debounce; the 3D preview keeps updating live in valueChanged.
-        for slider in (
-            self.ui.sizeSlider,
-            self.ui.sideCutSlider,
-            self.ui.faceAgeSlider,
-            self.ui.chinWidthSlider,
-            self.ui.frontStrokeSlider,
-            self.ui.backStrokeSlider,
-        ):
-            slider.sliderReleased.connect(self._redraw_now)
+        # Sin flush en ``sliderReleased``: el retardo configurado manda y el
+        # canvas solo se redibuja al expirar ``_redraw_timer``. La preview del
+        # docker ya se repinta en vivo en cada ``valueChanged``.
 
         self.ui.showArrow.toggled.connect(lambda v: self.with_schedule_update(lambda: self.loomis_head.set_arrow(v)))
         self.ui.zoneColors.toggled.connect(self._set_zone_colors)
@@ -1081,6 +1094,22 @@ class LoomisProportionsDocker(DockWidget):
         view_row.addWidget(self.ui.labelView)
         view_row.addWidget(self.ui.viewCombo, 1)
         fixed_layout.addLayout(view_row)
+
+        self.delayLabel = QLabel(t("delay.label"))
+        self.delaySpin = QSpinBox()
+        self.delaySpin.setRange(DELAY_MIN_MS, DELAY_MAX_MS)
+        self.delaySpin.setSingleStep(DELAY_STEP_MS)
+        self.delaySpin.setSuffix(" ms")
+        self.delaySpin.setValue(
+            _clamp_delay(self._settings.get("redrawDelay", REDRAW_INTERVAL_MS))
+        )
+        self.delaySpin.setToolTip(t("delay.tooltip"))
+        # Conectar despues de fijar el valor: el arranque no reescribe settings.
+        self.delaySpin.valueChanged.connect(self._on_delay_changed)
+        delay_row = QHBoxLayout()
+        delay_row.addWidget(self.delayLabel)
+        delay_row.addWidget(self.delaySpin, 1)
+        fixed_layout.addLayout(delay_row)
 
         fixed_layout.addWidget(self.ui.presetGroup)
 
@@ -1369,6 +1398,21 @@ class LoomisProportionsDocker(DockWidget):
         self.update_scheduled = True
         self._redraw_timer.start()
 
+    def _on_delay_changed(self, value: int) -> None:
+        """Guarda el Input Delay y cambia el intervalo del debounce.
+
+        No redibuja: el retardo es solo la espera antes de mandar al canvas.
+        """
+        delay = _clamp_delay(value)
+        if delay != value:
+            self.delaySpin.blockSignals(True)
+            self.delaySpin.setValue(delay)
+            self.delaySpin.blockSignals(False)
+        if hasattr(self, "_redraw_timer"):
+            self._redraw_timer.setInterval(delay)
+        self._settings["redrawDelay"] = delay
+        self._save_settings()
+
     # create_loomis_layer se sustituyo por _create_guide/ensure_guide.
 
     def _layer_bounds_center(self):
@@ -1439,9 +1483,9 @@ class LoomisProportionsDocker(DockWidget):
     # Limitation: Krita 5.3.4's krita.pyi exposes neither beginUndo/endUndo nor
     # KUndo2Command, so the plugin cannot open an undo macro around this call.
     # Each redraw (shape.remove + addShapesFromSvg) therefore leaves its own
-    # entries in the undo history. Mitigation only: redraw 500 ms after the last
-    # change, immediate flush on sliderReleased. Grouping them into a single
-    # undo step needs C++ (or a layer swap Krita groups, which would break
+    # entries in the undo history. Mitigation only: redraw after the Input Delay
+    # (500 ms by default) with no flush on sliderReleased. Grouping them into a
+    # single undo step needs C++ (or a layer swap Krita groups, which would break
     # Guide.layer/guides.json) and stays as debt.
     def draw_lines_with_vectors(self, samples: int = 512):
         if not self.doc:
@@ -1451,6 +1495,12 @@ class LoomisProportionsDocker(DockWidget):
             self.ensure_guide()
             self.update_scheduled = False
             return
+
+        # Antes de leer cualquier posicion: si el usuario movio la capa con
+        # Move/Transform, el marcador esta desplazado y X/Y siguen viejos. Se
+        # adopta el marcador (1:1) para que build_svg y el marcador nuevo se
+        # creen donde el usuario lo dejo, no en la posicion anterior.
+        self.sync_manual_position()
 
         self._drawing = True
         try:

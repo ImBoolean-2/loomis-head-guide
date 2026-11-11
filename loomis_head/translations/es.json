@@ -106,6 +106,8 @@
   "error.bad_head": "Ese archivo no es una cabeza Loomis válida.",
   "error.head_model": "Esa cabeza usa otro modelo: {model}",
   "view.label": "Vista",
+  "delay.label": "Retardo",
+  "delay.tooltip": "Espera sin cambios antes de redibujar el lienzo. La preview del docker sigue en vivo.",
   "view.front": "Frontal",
   "view.three_quarter": "3/4",
   "view.profile": "Perfil",
