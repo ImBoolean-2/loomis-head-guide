@@ -1,6 +1,6 @@
-# Upstream diff: 0.5.0 → 0.7.12
+# Upstream diff: 0.5.0 → 0.7.13
 
-This document describes `release/loomis-head-guide-0.7.12.patch`, a cumulative diff of the
+This document describes `release/loomis-head-guide-0.7.13.patch`, a cumulative diff of the
 imboolean fork on top of **Nedeljko Umjetnik's Loomis Method Head Guide 0.5.0**.
 
 ## Base of the diff
@@ -8,11 +8,11 @@ imboolean fork on top of **Nedeljko Umjetnik's Loomis Method Head Guide 0.5.0**.
 - Base commit: `b8a762d` — *Loomis Head Guide 0.5.0: independent fork with multi-head
   state, 3D preview and i18n*.
 - Generated with `git diff b8a762d`, with the exclusions listed at the end.
-- Size: **35 files, +9193 / −398** lines (592,164 bytes of patch text).
-- The patch is cumulative: it contains 0.5.1, 0.6.0, 0.6.1 and 0.7.0 to 0.7.12 in one
+- Size: **34 files, +9281 / −399** lines (596,908 bytes of patch text).
+- The patch is cumulative: it contains 0.5.1, 0.6.0, 0.6.1 and 0.7.0 to 0.7.13 in one
   step. It is meant to be applied on a clean 0.5.0 tree, not on an already-patched one.
-- Checked with `git apply --check -p1` on a fresh `b8a762d` export; after applying, the
-  unit suite gives **153 OK** (`python3 -m unittest test_generator test_asaro`).
+- Checked with `git apply --check -p1` on a fresh `b8a762d` export (`APPLY_CHECK_OK`); after
+  applying, the unit suite gives **153 OK** (`python3 -m unittest test_generator test_asaro`).
 
 ## What changed, by area
 
@@ -131,6 +131,13 @@ silhouette is a chain of segments rather than an anatomical curve.
 | Head block merge | `loomis_head/loomis_head_plugin.py` | `target["head"] = data` replaced the whole block and dropped `lightAzimuth`, `lightElevation`, `lightIntensity`, `shadowMode`, `showShadow` and any unknown key. The previous block is now **merged** with the new one, new values win. |
 | Tests | `loomis_head/test_ui_offscreen.py` | 9 OK offscreen (was 7): preserves 0600 on JSON and backup, and keeps `lightAzimuth`/`futureKey` while `scale` becomes 1.0. The unit suite stays at 153 OK. |
 
+### 0.7.13 — Features tab fits the docker (working tree)
+
+| Area | Files | What |
+| --- | --- | --- |
+| Flag rows | `loomis_head/features_dialog.py` | `_add_flag_row()` put every flag in one `QHBoxLayout` with no wrapping: the **Show** row (eyes, brows, nose, ears, mouth curve) asked for **678 px** in Spanish while the panel sits in a `QScrollArea` with `horizontalScrollBarPolicy = ScrollBarAlwaysOff` at ~520 px, so the last checkboxes were clipped silently. The flags now use a **2-column `QGridLayout`** (5 → 2+2+1; 4 → 2+2; 1 → 1) with `horizontalSpacing=8`, `verticalSpacing=2` and zero margins; item order, `_flag_defaults`, `_flags`, the `toggled → _apply_flag` connection and both `addRow()` forms are unchanged. Panel minimum drops from **678 to 458 px**; three columns did not fit (535 px) because the `QFormLayout` label column is 216 px wide. |
+| Tests | `loomis_head/test_ui_offscreen.py` | 11 OK offscreen (was 9): `test_features_panel_cabe_en_520` fails with the old layout (678 px) and passes with the grid, and `test_flag_rows_siguen_conectadas` checks a flag still reaches the model after `sync_from_model()`. The unit suite stays at 153 OK. |
+
 ## How to apply
 
 ```bash
@@ -139,11 +146,11 @@ cd loomis-head-guide
 git checkout b8a762d
 
 # Preferred: git knows about new files and modes
-git apply --check release/loomis-head-guide-0.7.12.patch
-git apply release/loomis-head-guide-0.7.12.patch
+git apply --check release/loomis-head-guide-0.7.13.patch
+git apply release/loomis-head-guide-0.7.13.patch
 
 # GNU patch also works (the patch is plain text, no binary hunks)
-patch -p1 < release/loomis-head-guide-0.7.12.patch
+patch -p1 < release/loomis-head-guide-0.7.13.patch
 ```
 
 The patch creates `loomis_head/models.py`, `asaro.py`, `asaro_mesh.py`,
@@ -159,10 +166,10 @@ they do not import the docker.
 
 ## What this patch does NOT include
 
-- `docs/media/promo.png` (636 KB binary cover), `release/*.zip` and `release/*.patch`
-  (built artifacts), and `release/UPSTREAM-*` / `release/README*` (handoff notes). They are
-  excluded so the patch stays pure text and applies with `patch -p1`; the binaries add
-  nothing to a code review. They live in the fork's repository.
+- `docs/media/` (the 636 KB binary promo cover and its README), `release/*.zip` and
+  `release/*.patch` (built artifacts), and `release/UPSTREAM-*` / `release/README*` (handoff
+  notes). They are excluded so the patch stays code and docs that apply with `patch -p1`;
+  the media assets add nothing to a code review. They live in the fork's repository.
 - **The Grimoire of Color plugin.** The fork only *detects* `grimorio.json`, lists its
   characters and writes the `head` block (with a `.bak`). No Grimoire code ships here and
   the plugin works fully standalone.

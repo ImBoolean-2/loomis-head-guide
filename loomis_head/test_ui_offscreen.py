@@ -279,6 +279,42 @@ class DockerOffscreenTests(unittest.TestCase):
         self.assertIn("aa=0", summary)
         self.assertIn("refresh=0", summary)
 
+    def test_features_panel_cabe_en_520(self):
+        """La pestana Rasgos no puede pedir mas ancho del que tiene el docker.
+
+        El scroll del docker oculta la barra horizontal
+        (``ui/LoomisDocker.ui``), asi que un minimo mas ancho que el marco
+        recorta por la derecha los ultimos checkboxes/sliders. Con la fila
+        "Mostrar" en un unico QHBoxLayout el panel pedia 678 px a 520 (con 3
+        columnas aun 535, por la etiqueta del QFormLayout y "Curva de boca").
+        """
+        docker = self.docker
+        docker.resize(520, 900)
+        docker.show()
+        self.app.processEvents()
+        # ``feature_panel`` es un QWidget dentro del QStackedWidget de la
+        # pestana (``loomis_head_plugin.py``), no un QScrollArea.
+        panel = docker.feature_panel
+        width = panel.minimumSizeHint().width()
+        self.assertLessEqual(
+            width,
+            500,
+            f"el panel de Rasgos pide {width} px de ancho minimo",
+        )
+
+    def test_flag_rows_siguen_conectadas(self):
+        """El cambio de layout no puede romper la conexion checkbox -> modelo."""
+        docker = self.docker
+        panel = docker.feature_panel
+        panel.sync_from_model()
+        boxes = {attr: checkbox for checkbox, attr in panel._flags}
+        box = boxes["show_ears"]
+        before = bool(docker.loomis_head.show_ears)
+        box.setChecked(not before)
+        self.assertNotEqual(bool(docker.loomis_head.show_ears), before)
+        box.setChecked(before)
+        self.assertEqual(bool(docker.loomis_head.show_ears), before)
+
     def _seed_grimorio(self, head):
         """Crea el grimorio.json del sandbox (XDG_DATA_HOME temporal)."""
         path = self.docker._grimorio_file()

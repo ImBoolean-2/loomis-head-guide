@@ -13,7 +13,7 @@ from .qt_compat import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QSlider,
     QVBoxLayout,
@@ -227,9 +227,17 @@ class FeaturePanel(_ModelPanel):
     def _add_flag_row(self, label, items, defaults=None) -> None:
         defaults = defaults or {}
         box = QWidget()
-        layout = QHBoxLayout(box)
+        # Grid de columnas: con un QHBoxLayout la fila "Mostrar" (5 flags)
+        # pedia 678 px de minimo, mas que el docker (520), y el scroll
+        # horizontal oculto del .ui recortaba el panel por la derecha.
+        # 3 columnas aun daba 535 px (la columna de etiquetas del QFormLayout
+        # mide 216 y "Curva de boca" 148), asi que caben 2 por fila.
+        layout = QGridLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        for text, attr in items:
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(2)
+        columns = 2
+        for index, (text, attr) in enumerate(items):
             default = bool(defaults.get(attr, False))
             self._flag_defaults[attr] = default
             checkbox = QCheckBox(text)
@@ -238,7 +246,7 @@ class FeaturePanel(_ModelPanel):
             # (set_model) los checkboxes deben escribir en el modelo activo,
             # no en el que existia al construir el panel.
             checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
-            layout.addWidget(checkbox)
+            layout.addWidget(checkbox, index // columns, index % columns)
             self._flags.append((checkbox, attr))
         if label is None:
             self._form.addRow(box)

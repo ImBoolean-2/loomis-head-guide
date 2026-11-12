@@ -1,9 +1,9 @@
-# Loomis Head Guide 0.7.12 — handoff notes
+# Loomis Head Guide 0.7.13 — handoff notes
 
 For **Nedeljko Umjetnik**, upstream author of the Loomis Method Head Guide. This fork
-starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.12.md`
+starts from your 0.5.0 (`b8a762d`) and adds the work below. `release/UPSTREAM-DIFF-0.7.13.md`
 explains the diff; this file is the short version: what you get, what to watch out for and
-how to try it.
+how to try it. The user-facing notes are in `RELEASE-NOTES-0.7.13.md` (Spanish).
 
 ## What is new since 0.5.0
 
@@ -64,6 +64,10 @@ how to try it.
     mode instead of being downgraded to 0644, and the `head` block is **merged** instead of
     replaced, so `lightAzimuth`/`lightElevation`/`lightIntensity`/`shadowMode`/`showShadow`
     and unknown future keys survive a save from Loomis.
+18. **Features tab fits the docker** (0.7.13): the *Show* row of the Features tab asked for
+    ~690 px while the docker is ~520 px wide, so its last checkboxes were clipped; the flags
+    now wrap in a 2-column grid (panel minimum 678 → 458 px) with the order and toggles
+    unchanged.
 
 > **Asaro is still a work in progress: low-poly profile, cranium and ear; configuration is
 > minimal.** It is a plane block-in, not a proportion reference. Loomis is the main engine.
@@ -91,7 +95,7 @@ how to try it.
 cd loomis_head
 python3 -m unittest test_generator test_asaro
 
-# 2. Docker test, needs Qt but not Krita (9 tests in Krita's flatpak; SKIP otherwise)
+# 2. Docker test, needs Qt but not Krita (11 tests in Krita's flatpak; SKIP otherwise)
 flatpak run --env=QT_QPA_PLATFORM=offscreen --env=QT_QPA_PLATFORMTHEME= \
   --command=python3 --filesystem=home --filesystem=/tmp org.kde.krita \
   loomis_head/test_ui_offscreen.py
@@ -99,7 +103,7 @@ flatpak run --env=QT_QPA_PLATFORM=offscreen --env=QT_QPA_PLATFORMTHEME= \
 # 3. Install
 cp -r loomis_head loomis_head.desktop \
   ~/.var/app/org.kde.krita/data/krita/pykrita/
-# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.12.zip
+# or: Tools → Scripts → Import Python Plugins → release/loomis-head-guide-0.7.13.zip
 ```
 
 Then in Krita:

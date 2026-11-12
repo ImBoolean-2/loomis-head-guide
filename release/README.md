@@ -1,7 +1,7 @@
 # Release
 
-`loomis-head-guide-0.7.12.zip` is the installable package, and the **last public build**:
-0.7.3 to 0.7.11 stayed local, so there is no ZIP or patch for them. Its root contains
+`loomis-head-guide-0.7.13.zip` is the installable package, and the **last public build**:
+0.7.3 to 0.7.12 stayed local, so there is no ZIP or patch for them. Its root contains
 `loomis_head/` and `loomis_head.desktop`, so Krita's **Tools → Scripts → Import Python
 Plugins** accepts it directly.
 
@@ -9,7 +9,7 @@ The ZIP is built from the `loomis_head/` folder in this repository:
 
 ```bash
 cd ..
-zip -r release/loomis-head-guide-0.7.12.zip loomis_head loomis_head.desktop \
+zip -r release/loomis-head-guide-0.7.13.zip loomis_head loomis_head.desktop \
   -x '*/__pycache__/*' '*.pyc' '*.bak*'
 ```
 
@@ -29,34 +29,37 @@ zip -r release/loomis-head-guide-0.7.12.zip loomis_head loomis_head.desktop \
   vertical line until the document was reopened.
 - **Grimoire of Color 0.7.0**: keeps `grimorio.json` at 0600 and merges the `head` block
   instead of replacing it, so unknown keys (the 0.6.0 light) are not lost.
+- **Features tab fits the docker**: the *Show* row asked for ~690 px while the docker is
+  ~520 px wide, so the last checkboxes were clipped; the flags now use a 2-column grid
+  (panel minimum 678 → 458 px).
 
 > **Asaro is still a work in progress.** The profile, the cranium vault and the ear are
 > low-poly, the plane transitions are coarse at detail 0 and its panel is minimal. Use it as
-> a plane block-in; Loomis is the main engine. Details in `RELEASE-NOTES-0.7.12.md`.
+> a plane block-in; Loomis is the main engine. Details in `RELEASE-NOTES-0.7.13.md`.
 
 ## Other files
 
-- `loomis-head-guide-0.7.12.patch` — cumulative diff from the 0.5.0 base (`b8a762d`) to
-  0.7.12, including the uncommitted 0.7.12 fixes. See `UPSTREAM-DIFF-0.7.12.md` for how to
+- `loomis-head-guide-0.7.13.patch` — cumulative diff from the 0.5.0 base (`b8a762d`) to
+  0.7.13, including the uncommitted 0.7.13 fix. See `UPSTREAM-DIFF-0.7.13.md` for how to
   apply it and what it excludes.
-- `UPSTREAM-DIFF-0.7.12.md` — per-area summary of the diff and its base.
+- `UPSTREAM-DIFF-0.7.13.md` — per-area summary of the diff and its base.
 - `README-UPSTREAM.md` — handoff for the upstream author: features, compatibility, how to
   test and known limits (PyQt6 untested, undo without a macro, Asaro still low-poly).
-- `RELEASE-NOTES-0.7.12.md` — user-facing release notes, **in Spanish**.
+- `RELEASE-NOTES-0.7.13.md` — user-facing release notes, **in Spanish**.
 - `loomis-head-guide-0.7.2.*` and older (`0.7.1`, `0.7.0`, `0.6.x`, `0.5.x`, their
   `UPSTREAM-DIFF-*.md`) — kept as history.
 
 ## Checks before publishing
 
 ```bash
-cd loomis_head && python3 -m unittest test_generator test_asaro   # 153 tests in 0.7.12
+cd loomis_head && python3 -m unittest test_generator test_asaro   # 153 tests in 0.7.13
 
 # docker test: SKIP on a host without PyQt5, real offscreen run in Krita's flatpak
 flatpak run --env=QT_QPA_PLATFORM=offscreen --env=QT_QPA_PLATFORMTHEME= \
   --command=python3 --filesystem=home --filesystem=/tmp org.kde.krita \
-  loomis_head/test_ui_offscreen.py                                # 9 tests in 0.7.12
+  loomis_head/test_ui_offscreen.py                                # 11 tests in 0.7.13
 
-cd .. && unzip -l release/loomis-head-guide-0.7.12.zip | grep -E 'models|asaro|qt_compat'
+cd .. && unzip -l release/loomis-head-guide-0.7.13.zip | grep -E 'models|asaro|qt_compat'
 ```
 
 The patch is verified on a clean export, not on the working tree:
@@ -65,7 +68,7 @@ The patch is verified on a clean export, not on the working tree:
 rm -rf /tmp/apply && mkdir -p /tmp/apply
 git archive b8a762d | tar -x -C /tmp/apply
 cd /tmp/apply && git init -q . && git add -A && git commit -qm base
-git apply --check -p1 /path/to/release/loomis-head-guide-0.7.12.patch
-git apply -p1 /path/to/release/loomis-head-guide-0.7.12.patch
+git apply --check -p1 /path/to/release/loomis-head-guide-0.7.13.patch
+git apply -p1 /path/to/release/loomis-head-guide-0.7.13.patch
 cd loomis_head && python3 -m unittest test_generator test_asaro   # 153 OK
 ```

@@ -39,7 +39,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   reference, not a smooth anatomical sculpt (licensed **CC BY 4.0** with attribution, see
   [LICENSE-ASSETS.md](LICENSE-ASSETS.md)). It is a **work in progress**: profile, cranium
   vault and ear are still low-poly and the Asaro panel is minimal. See
-  [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
+  [release/RELEASE-NOTES-0.7.13.md](release/RELEASE-NOTES-0.7.13.md).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9,
@@ -105,7 +105,7 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.12.zip` (last public build; 0.7.3 to 0.7.11
+1. Download `release/loomis-head-guide-0.7.13.zip` (last public build; 0.7.3 to 0.7.12
    were local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
@@ -230,9 +230,9 @@ every silhouette is a chain of segments. Use it to place planes, then draw over 
 > **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 > the full text and a copy-paste credit line are in
 > [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. The
-> current public build is **0.7.12** (`release/loomis-head-guide-0.7.12.zip` plus the
+> current public build is **0.7.13** (`release/loomis-head-guide-0.7.13.zip` plus the
 > cumulative patch); its release notes are in
-> [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
+> [release/RELEASE-NOTES-0.7.13.md](release/RELEASE-NOTES-0.7.13.md).
 
 ## Development
 

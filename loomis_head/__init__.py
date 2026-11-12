@@ -1,4 +1,4 @@
-__version__ = "0.7.12"
+__version__ = "0.7.13"
 
 # SPDX-FileCopyrightText: 2025 lm0ss
 # SPDX-FileCopyrightText: 2026 Nedeljko Umjetnik

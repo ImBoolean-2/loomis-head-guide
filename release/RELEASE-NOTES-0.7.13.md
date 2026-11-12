@@ -1,9 +1,9 @@
-# Loomis Head Guide 0.7.12 — notas de la versión
+# Loomis Head Guide 0.7.13 — notas de la versión
 
-Primera build **pública** desde la 0.7.2. Agrupa nueve versiones de trabajo interno
-(0.7.3 a 0.7.12) y cierra dos regresiones que hicieron inservible el plugin en Krita
+Primera build **pública** desde la 0.7.2. Agrupa once versiones de trabajo interno
+(0.7.3 a 0.7.13) y cierra dos regresiones que hicieron inservible el plugin en Krita
 durante un tiempo: la cabeza que se encogía al moverla y la cabeza que se dibujaba
-cortada al rotarla.
+cortada al rotarla; además recorta la pestaña Rasgos para que quepa en el docker.
 
 - **Plugin:** `loomis_head/` + `loomis_head.desktop`
 - **Instalación:** Krita → *Herramientas → Scripts → Importar plugin de Python* → elegir
@@ -80,6 +80,13 @@ Loomis lo recorta, el otro plugin pierde datos que sí estaba guardando bien.
 entra en *modo independiente* (el selector de personaje se deshabilita y los presets se
 guardan en su propio directorio). El Grimorio no importa ni necesita nada de Loomis.
 
+### 1.5 La pestaña Rasgos cabe en el docker (0.7.13)
+
+- La fila **Mostrar** pedía **~690 px** de ancho y el docker mide **~520**, así que los
+  últimos checkboxes (Orejas, Curva de boca) quedaban fuera del marco y se recortaban en
+  silencio. Ahora los flags van en un **grid de 2 columnas** (5 → 2+2+1) que baja el
+  mínimo del panel de **678 a 458 px**, sin cambiar el orden ni el comportamiento.
+
 ---
 
 ## 2. Asaro sigue en proceso (importante)
@@ -132,7 +139,7 @@ proporciones. Loomis es el motor principal y el que recibe los ajustes finos.
 ## 5. Verificación de esta build
 
 - **153 tests** de generador y malla Asaro (`python3 -m unittest test_generator test_asaro`).
-- **9 tests** de UI offscreen del docker en el flatpak de Krita (PyQt5 real).
+- **11 tests** de UI offscreen del docker en el flatpak de Krita (PyQt5 real).
 - **QA de compatibilidad** con el ZIP público del Grimorio 0.7.0: 110 comprobaciones
   (escritura del `head`, preservación del resto del JSON, round-trips, permisos, backup,
   independencia), más la revalidación de los dos arreglos de la 0.7.12.

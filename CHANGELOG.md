@@ -526,10 +526,36 @@ validar en Krita.
   0600 en JSON y backup, y conserva `lightAzimuth`/`futureKey` mientras `scale` pasa a 1.0.
   `test_generator` + `test_asaro` siguen en **153 OK**. E2E manual sobre una copia del JSON
   real: 10/10 (modo, backup, claves legacy, resto del fichero y demás personajes intactos).
-- **Publicada**: `release/loomis-head-guide-0.7.12.zip` (35 entradas: 31 ficheros + 4
-  carpetas, sin `__pycache__`/`.pyc`/`.bak`) y `release/loomis-head-guide-0.7.12.patch`
-  (acumulado desde `b8a762d`, sin `release/` ni binarios; cifras exactas en
-  `release/UPSTREAM-DIFF-0.7.12.md`). El patch se verificó sobre un export limpio de `b8a762d`:
-  `git apply --check -p1` → `APPLY_CHECK_OK` y, tras aplicar,
-  `python3 -m unittest test_generator test_asaro` → **153 OK**. 0.7.12 es la última build
-  pública; 0.7.3 a 0.7.11 siguen siendo locales y 0.7.2 queda como histórico en `release/`.
+- **No publicada**: la publicación fue la **0.7.13**; el ZIP y el patch de esta release
+  salieron con ese número (ver la entrada siguiente).
+
+## 0.7.13 — 2026-11-12
+
+- **Recorte de la pestaña Rasgos (bug de UI confirmado con capturas)**: a 520 px de docker
+  (ancho normal) los últimos checkboxes de la fila **Mostrar** quedaban fuera del marco por
+  la derecha. `_add_flag_row()` metía todos los flags en un `QHBoxLayout` sin wrap: la fila
+  "Mostrar" (Ojos, Cejas, Nariz, Orejas, Curva de boca) pedía **678 px** de mínimo y el
+  `QScrollArea` del `.ui` tiene `horizontalScrollBarPolicy = Qt::ScrollBarAlwaysOff`, así que
+  el panel se recortaba en silencio. Ahora los flags van en un **`QGridLayout` que envuelve
+  en varias filas** (2 por fila: 5 → 2+2+1; 4 → 2+2; 1 → 1) con `horizontalSpacing=8`,
+  `verticalSpacing=2` y márgenes 0. Se mantienen el orden de los items, `_flag_defaults`,
+  `_flags`, la conexión `toggled → _apply_flag` y el `addRow(label, box)` /
+  `addRow(box)` con `label=None`. El mínimo del panel pasa de **678 a 458 px** a 520
+  (medido en el flatpak, offscreen). No se tocó el `.ui` ni el resto de paneles.
+  Se probó 3 columnas y **no basta en español**: la columna de etiquetas del `QFormLayout`
+  mide 216 px y "Curva de boca" 148, así que 3+2 dejaba el mínimo en **535 > 520**; con 2
+  columnas (el orden de lectura se conserva) baja a 458.
+- **Tests**: dos nuevos en `test_ui_offscreen.py` (**11 OK** en el flatpak; antes 9):
+  `test_features_panel_cabe_en_520` (con el layout viejo falla con 678 px; con el nuevo
+  pasa) y `test_flag_rows_siguen_conectadas` (marcar/desmarcar `show_ears` tras
+  `sync_from_model()` sigue escribiendo en el modelo). `test_generator` + `test_asaro`
+  siguen en **153 OK** y `python3 -m py_compile *.py` pasa.
+- **Publicada**: `release/loomis-head-guide-0.7.13.zip` (35 entradas: 31 ficheros + 4
+  carpetas, sin `__pycache__`/`.pyc`/`.bak`) y `release/loomis-head-guide-0.7.13.patch`
+  (acumulado desde `b8a762d`, sin `release/` ni `docs/media/`; cifras exactas en
+  `release/UPSTREAM-DIFF-0.7.13.md`). El patch se verificó sobre un export limpio de
+  `b8a762d`: `git apply --check -p1` → `APPLY_CHECK_OK` y, tras aplicar,
+  `python3 -m unittest test_generator test_asaro` → **153 OK**. La build incluye también
+  los arreglos de Grimorio de la 0.7.12 y la UI offscreen pasa **11** tests. 0.7.13 es la
+  última build pública; 0.7.3 a 0.7.12 siguen siendo locales y 0.7.2 queda como histórico
+  en `release/`.

@@ -18,10 +18,10 @@ index 5045462..3c1094b 100644
        - name: Translations and UI XML
          run: |
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 6ad7e04..df09819 100644
+index 6ad7e04..083220e 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -19,3 +19,517 @@ First public release of the imboolean fork.
+@@ -19,3 +19,543 @@ First public release of the imboolean fork.
  - Credits and SPDX headers; GPL-3.0-only.
  
  Based on Loomis Method Head Guide by Nedeljko Umjetnik and Loomis Head Generator by lm0ss.
@@ -532,13 +532,39 @@ index 6ad7e04..df09819 100644
 +  0600 en JSON y backup, y conserva `lightAzimuth`/`futureKey` mientras `scale` pasa a 1.0.
 +  `test_generator` + `test_asaro` siguen en **153 OK**. E2E manual sobre una copia del JSON
 +  real: 10/10 (modo, backup, claves legacy, resto del fichero y demás personajes intactos).
-+- **Publicada**: `release/loomis-head-guide-0.7.12.zip` (35 entradas: 31 ficheros + 4
-+  carpetas, sin `__pycache__`/`.pyc`/`.bak`) y `release/loomis-head-guide-0.7.12.patch`
-+  (acumulado desde `b8a762d`, sin `release/` ni binarios; cifras exactas en
-+  `release/UPSTREAM-DIFF-0.7.12.md`). El patch se verificó sobre un export limpio de `b8a762d`:
-+  `git apply --check -p1` → `APPLY_CHECK_OK` y, tras aplicar,
-+  `python3 -m unittest test_generator test_asaro` → **153 OK**. 0.7.12 es la última build
-+  pública; 0.7.3 a 0.7.11 siguen siendo locales y 0.7.2 queda como histórico en `release/`.
++- **No publicada**: la publicación fue la **0.7.13**; el ZIP y el patch de esta release
++  salieron con ese número (ver la entrada siguiente).
++
++## 0.7.13 — 2026-11-12
++
++- **Recorte de la pestaña Rasgos (bug de UI confirmado con capturas)**: a 520 px de docker
++  (ancho normal) los últimos checkboxes de la fila **Mostrar** quedaban fuera del marco por
++  la derecha. `_add_flag_row()` metía todos los flags en un `QHBoxLayout` sin wrap: la fila
++  "Mostrar" (Ojos, Cejas, Nariz, Orejas, Curva de boca) pedía **678 px** de mínimo y el
++  `QScrollArea` del `.ui` tiene `horizontalScrollBarPolicy = Qt::ScrollBarAlwaysOff`, así que
++  el panel se recortaba en silencio. Ahora los flags van en un **`QGridLayout` que envuelve
++  en varias filas** (2 por fila: 5 → 2+2+1; 4 → 2+2; 1 → 1) con `horizontalSpacing=8`,
++  `verticalSpacing=2` y márgenes 0. Se mantienen el orden de los items, `_flag_defaults`,
++  `_flags`, la conexión `toggled → _apply_flag` y el `addRow(label, box)` /
++  `addRow(box)` con `label=None`. El mínimo del panel pasa de **678 a 458 px** a 520
++  (medido en el flatpak, offscreen). No se tocó el `.ui` ni el resto de paneles.
++  Se probó 3 columnas y **no basta en español**: la columna de etiquetas del `QFormLayout`
++  mide 216 px y "Curva de boca" 148, así que 3+2 dejaba el mínimo en **535 > 520**; con 2
++  columnas (el orden de lectura se conserva) baja a 458.
++- **Tests**: dos nuevos en `test_ui_offscreen.py` (**11 OK** en el flatpak; antes 9):
++  `test_features_panel_cabe_en_520` (con el layout viejo falla con 678 px; con el nuevo
++  pasa) y `test_flag_rows_siguen_conectadas` (marcar/desmarcar `show_ears` tras
++  `sync_from_model()` sigue escribiendo en el modelo). `test_generator` + `test_asaro`
++  siguen en **153 OK** y `python3 -m py_compile *.py` pasa.
++- **Publicada**: `release/loomis-head-guide-0.7.13.zip` (35 entradas: 31 ficheros + 4
++  carpetas, sin `__pycache__`/`.pyc`/`.bak`) y `release/loomis-head-guide-0.7.13.patch`
++  (acumulado desde `b8a762d`, sin `release/` ni `docs/media/`; cifras exactas en
++  `release/UPSTREAM-DIFF-0.7.13.md`). El patch se verificó sobre un export limpio de
++  `b8a762d`: `git apply --check -p1` → `APPLY_CHECK_OK` y, tras aplicar,
++  `python3 -m unittest test_generator test_asaro` → **153 OK**. La build incluye también
++  los arreglos de Grimorio de la 0.7.12 y la UI offscreen pasa **11** tests. 0.7.13 es la
++  última build pública; 0.7.3 a 0.7.12 siguen siendo locales y 0.7.2 queda como histórico
++  en `release/`.
 diff --git a/CREDITS.md b/CREDITS.md
 index 41ccbff..e0f1ae7 100644
 --- a/CREDITS.md
@@ -585,10 +611,10 @@ index 41ccbff..e0f1ae7 100644
 +  modification notice above. See [LICENSE-ASSETS.md](LICENSE-ASSETS.md).
 diff --git a/HANDOFF.md b/HANDOFF.md
 new file mode 100644
-index 0000000..34290f7
+index 0000000..9a3e7cd
 --- /dev/null
 +++ b/HANDOFF.md
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,171 @@
 +# Loomis Head Guide — Handoff 2026-11-12
 +
 +Este documento es para el siguiente chat/agente. Resume el estado real del proyecto
@@ -601,16 +627,19 @@ index 0000000..34290f7
 +- **Proyecto:** `/mnt/shared/krita-plugins/projects/loomis-head-guide`
 +  (antes `~/proyectos/loomis-head-guide`; el original se movió).
 +- **Plugin instalado en Krita:** `~/.var/app/org.kde.krita/data/krita/pykrita/loomis_head`
-+  → versión **0.7.12**, backups `.bak-0.7.12-<fecha>` (18 ficheros), `.bak-0.7.11-…` y anteriores.
-+- **Repo git:** mismo proyecto, HEAD `9fb4332` más los cambios 0.7.11 y 0.7.12 (sin commit ni push).
-+- **Release pública:** `release/` solo hasta **0.7.2** (`loomis-head-guide-0.7.2.zip`
-+  + `.patch` + `UPSTREAM-DIFF-0.7.2.md`). **No hay ZIP/patch 0.7.3–0.7.12**: son
-+  builds locales.
++  → versión **0.7.13**, backups `.bak-0.7.13-<fecha>` (2 ficheros: `features_dialog.py`,
++  `__init__.py`), `.bak-0.7.12-…` (18 ficheros) y anteriores.
++- **Repo git:** mismo proyecto, HEAD `9fb4332` más los cambios 0.7.11, 0.7.12 y 0.7.13
++  (sin commit ni push).
++- **Release pública:** **0.7.13** (`loomis-head-guide-0.7.13.zip` + `.patch` +
++  `RELEASE-NOTES-0.7.13.md`); 0.7.3–0.7.12 son builds locales y 0.7.2 queda como
++  histórico en `release/`.
 +
-+## Estado actual (0.7.12 local)
++## Estado actual (0.7.13 publicada)
 +
 +Plugin Krita 5.3.4 + PyQt5, con shim PyQt6. 5 pestañas: Ajustes, Mover, Guías,
-+Rasgos, Pelo.
++Rasgos, Pelo. 0.7.13 = 0.7.12 + la fila "Mostrar" de Rasgos en grid (mínimo del panel
++678 → 458 px a 520) y sus 2 tests nuevos.
 +
 +Cerrado:
 +
@@ -650,8 +679,8 @@ index 0000000..34290f7
 +  renombrado de guías, color duplicado, shim `QPointF/QSpinBox/QTransform`, regex de
 +  color, backup Grimorio).
 +- **Tests:** `python3 -m unittest test_generator test_asaro` → **153 OK**
-+  (76 generador + 77 Asaro). `test_ui_offscreen.py` → **9 OK** en el flatpak
-+  (PyQt5; 5 previos + 2 de `_force_layer_rerender` + 2 de Grimorio 0.7.12); en host
++  (76 generador + 77 Asaro). `test_ui_offscreen.py` → **11 OK** en el flatpak
++  (PyQt5; 9 previos + 2 de 0.7.13: panel de Rasgos ≤500 px a 520 y flags conectados); en host
 +  sin PyQt5 se salta. El UI test y `test_generator` en el **mismo proceso** con el stub
 +  de `krita` chocan (pre-existente): ejecutar el UI aparte.
 +- **Compatibilidad con Grimorio de Color 0.7.0 (0.7.12):** `_write_head_to_grimorio()`
@@ -664,14 +693,25 @@ index 0000000..34290f7
 +  `pivot.log` registra `base=`, `delta=`, `total=`, `marker=`, `visible=` y, en las líneas
 +  `draw`, `rerender=aa=…,refresh=…`.
 +
-+## Lo que falta (bloqueante antes de publicar 0.7.12)
++## Lo que falta (validación manual de 0.7.13 en Krita real)
++
++**Validar en Krita real el 0.7.13 (UI).** El docker a su ancho normal (~520 px) recortaba
++por la derecha la pestaña Rasgos: la fila "Mostrar" pedía 678 px y el `QScrollArea` del
++`.ui` oculta la barra horizontal. Ya va en grid de 2 columnas (mínimo medido 458 px en
++offscreen), pero falta verlo en el docker real:
++
++1. Abrir el docker sin ensanchar: pestaña **Rasgos** → la fila "Mostrar" debe verse entera
++   en 2–3 líneas (Ojos/Cejas, Nariz/Orejas, Curva de boca), sin recorte a la derecha.
++2. Marcar/desmarcar cada flag y comprobar que la cabeza cambia (conexiones intactas).
++3. Estrechar el docker a ~400 px: solo debe aparecer scroll **vertical**; si algo se
++   recorta, adjuntar el ancho y una captura.
 +
 +**Validar en Krita real el 0.7.12.** El bug de base era la caché/proyección de la capa
 +vectorial: los shapes y `content.svg` estaban bien, pero `mergedimage.png` del `.kra` salía
 +cortado por una línea vertical y el lienzo no se arreglaba hasta reabrir el documento.
 +`_force_layer_rerender()` lo corrige (toggle de `setAntialiased()` + `refreshProjection()`
 +tras reaplicar el delta), pero no se ha podido probar con un `.kra` real desde este
-+entorno. Prueba, con Krita **reiniciado** para cargar 0.7.12:
++entorno. Prueba, con Krita **reiniciado** para cargar 0.7.13:
 +
 +1. Rotar (X/Y/Z) y mover con Move/Transform (A→B): la cabeza debe quedar **completa**, sin
 +   corte vertical, y el X/Y del docker debe coincidir con el “Position” de Krita.
@@ -682,8 +722,8 @@ index 0000000..34290f7
 +   X/Y de A/B/C. Las líneas `draw` acaban en `rerender=aa=…,refresh=…`: si sale
 +   `refresh=0` la API no llegó a llamarse en esa build de Krita.
 +
-+Con eso validado: generar ZIP/patch 0.7.12, actualizar `release/README`, `CHANGELOG`
-+global y `doc_change.sh`. **0.7.2 sigue siendo la última release pública.**
++El ZIP/patch 0.7.13 ya están generados y verificados (`APPLY_CHECK_OK`, 153 OK, 11 UI
++offscreen). Queda esta validación manual en Krita real.
 +
 +## Comandos útiles
 +
@@ -703,8 +743,12 @@ index 0000000..34290f7
 +
 +## Qué NO tocar / qué no hacer
 +
-+- No publiques 0.7.12 hasta validar rotar/mover/guardar/reabrir en Krita real; 0.7.2
-+  sigue siendo el último público.
++- La release 0.7.13 ya está publicada; si se detecta un fallo en la validación manual, se
++  corrige y se publica como 0.7.14 (no se reescribe el ZIP ya subido).
++- No vuelvas a poner la fila "Mostrar" de Rasgos en un `QHBoxLayout` (o en 3 columnas en
++  español): el mínimo sube a 678/535 px y el docker a 520 recorta por la derecha, porque
++  el scroll del `.ui` oculta la barra horizontal. Lo cubre
++  `test_features_panel_cabe_en_520`.
 +- No escribas el head con `target["head"] = data` ni sin `chmod`: se pierden las claves
 +  que Loomis no conoce y el JSON baja a 0644 (lo cubren los tests de 0.7.12).
 +- No sustituyas `_force_layer_rerender()` por `refreshProjection()` sola: sin el toggle de
@@ -724,7 +768,7 @@ index 0000000..34290f7
 +
 +## Siguientes pasos (después de validar)
 +
-+1. ZIP/patch 0.7.12 y release pública; actualizar `release/README`.
++1. Validación manual en Krita real de 0.7.13 (sección anterior).
 +2. Krita 6/PyQt6 smoke test (shim `qt_compat`; no hay Krita 6 instalado).
 +3. Asaro: perfil/cranium/oreja siguen siendo low-poly; el retopo limpio está en 242
 +   caras; un pulido fino es opcional.
@@ -741,7 +785,7 @@ index 0000000..34290f7
 +  0.7.7 reset (regresión), 0.7.8 transform manual (regresión), 0.7.9 revisión,
 +  0.7.10 base+delta (fix de la regresión), 0.7.11 caché/proyección de la capa vectorial
 +  (cabeza cortada al rotar/mover), 0.7.12 compatibilidad con Grimorio 0.7.0 (modo 0600
-+  y head fusionado).
++  y head fusionado), 0.7.13 fila "Mostrar" de Rasgos en grid (recorte a 520 px).
 diff --git a/LICENSE-ASSETS.md b/LICENSE-ASSETS.md
 new file mode 100644
 index 0000000..f37a58d
@@ -833,7 +877,7 @@ index 0000000..f37a58d
 +If you are a rights holder and believe an attribution or a permission is missing, open an
 +issue in this repository and the asset will be corrected or removed.
 diff --git a/README.md b/README.md
-index 687dfa1..b9ddd24 100644
+index 687dfa1..ae025a4 100644
 --- a/README.md
 +++ b/README.md
 @@ -27,12 +27,58 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
@@ -852,7 +896,7 @@ index 687dfa1..b9ddd24 100644
 +  reference, not a smooth anatomical sculpt (licensed **CC BY 4.0** with attribution, see
 +  [LICENSE-ASSETS.md](LICENSE-ASSETS.md)). It is a **work in progress**: profile, cranium
 +  vault and ear are still low-poly and the Asaro panel is minimal. See
-+  [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
++  [release/RELEASE-NOTES-0.7.13.md](release/RELEASE-NOTES-0.7.13.md).
  - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
    zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 +- **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9,
@@ -911,7 +955,7 @@ index 687dfa1..b9ddd24 100644
  ### ZIP (recommended)
  
 -1. Download `release/loomis-head-guide-0.5.0.zip`.
-+1. Download `release/loomis-head-guide-0.7.12.zip` (last public build; 0.7.3 to 0.7.11
++1. Download `release/loomis-head-guide-0.7.13.zip` (last public build; 0.7.3 to 0.7.12
 +   were local-only).
  2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
  3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
@@ -1008,9 +1052,9 @@ index 687dfa1..b9ddd24 100644
 +> **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 +> the full text and a copy-paste credit line are in
 +> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. The
-+> current public build is **0.7.12** (`release/loomis-head-guide-0.7.12.zip` plus the
++> current public build is **0.7.13** (`release/loomis-head-guide-0.7.13.zip` plus the
 +> cumulative patch); its release notes are in
-+> [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
++> [release/RELEASE-NOTES-0.7.13.md](release/RELEASE-NOTES-0.7.13.md).
  
  ## Development
  
@@ -1347,18 +1391,6 @@ index 4c33c72..d91df71 100644
 +  common interface (`build_svg(width, height, dash_back, samples)`, `to_dict`, `from_dict`,
 +  the transform and stroke setters). The share format already carries `model` and the loader
 +  resolves it through `create_model()`; unknown ids are refused with a message.
-diff --git a/docs/media/README.md b/docs/media/README.md
-index ab73ebf..d84ddd0 100644
---- a/docs/media/README.md
-+++ b/docs/media/README.md
-@@ -6,6 +6,7 @@
- | `head-front.png`, `head-three-quarter.png`, `head-back.png` | Real renders at 800×800 |
- | `zone-colors.png` | Front render showing the per-zone colours |
- | `hair-patterns.png` | Real renders of straight/zigzag/spiky/curly hair |
-+| `promo.png` | 1800×1200 promotional image: real head renders + panel mockup |
- | `panel.png` | Screenshot of the HTML panel mockup (not a real Krita screenshot) |
- | `panel-preview.html` | Browser mockup of the panel layout |
- 
 diff --git a/heads/README.md b/heads/README.md
 index 4d2dc20..3446ed8 100644
 --- a/heads/README.md
@@ -1550,12 +1582,12 @@ index 40ffa0e..0eea33d 100644
  ## Créditos
  
 diff --git a/loomis_head/__init__.py b/loomis_head/__init__.py
-index ce3bc9f..c1e8dbc 100644
+index ce3bc9f..76fbde3 100644
 --- a/loomis_head/__init__.py
 +++ b/loomis_head/__init__.py
 @@ -1,4 +1,4 @@
 -__version__ = "0.5.0"
-+__version__ = "0.7.12"
++__version__ = "0.7.13"
  
  # SPDX-FileCopyrightText: 2025 lm0ss
  # SPDX-FileCopyrightText: 2026 Nedeljko Umjetnik
@@ -3742,10 +3774,10 @@ index 0000000..88163c3
 +        index = 1
 +    return ASARO_LEVELS[max(0, min(LEVEL_COUNT - 1, index))]
 diff --git a/loomis_head/features_dialog.py b/loomis_head/features_dialog.py
-index 6ea02fb..955fa99 100644
+index 6ea02fb..9096401 100644
 --- a/loomis_head/features_dialog.py
 +++ b/loomis_head/features_dialog.py
-@@ -1,15 +1,15 @@
+@@ -1,23 +1,25 @@
  # SPDX-FileCopyrightText: 2026 imboolean
  # SPDX-License-Identifier: GPL-3.0-only
  
@@ -3766,7 +3798,9 @@ index 6ea02fb..955fa99 100644
      QCheckBox,
      QComboBox,
      QFormLayout,
-@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import (
+-    QHBoxLayout,
++    QGridLayout,
+     QLabel,
      QSlider,
      QVBoxLayout,
      QWidget,
@@ -3946,7 +3980,7 @@ index 6ea02fb..955fa99 100644
  
          self._section(t("features.section.features"))
          self._slider(t("features.eye_gap"), 10, 90, lambda: self.model.eye_gap * 100, lambda v: self.model.set_eye_gap(v / 100))
-@@ -90,63 +202,55 @@ class FeaturePanel(QWidget):
+@@ -90,63 +202,63 @@ class FeaturePanel(QWidget):
          self._slider(t("features.mouth_width"), 5, 60, lambda: self.model.mouth_width * 100, lambda v: self.model.set_mouth_width(v / 100))
          self._slider(t("features.mouth_curve"), -15, 15, lambda: self.model.mouth_curve * 100, lambda v: self.model.set_mouth_curve(v / 100))
  
@@ -4023,9 +4057,17 @@ index 6ea02fb..955fa99 100644
 +    def _add_flag_row(self, label, items, defaults=None) -> None:
 +        defaults = defaults or {}
 +        box = QWidget()
-+        layout = QHBoxLayout(box)
++        # Grid de columnas: con un QHBoxLayout la fila "Mostrar" (5 flags)
++        # pedia 678 px de minimo, mas que el docker (520), y el scroll
++        # horizontal oculto del .ui recortaba el panel por la derecha.
++        # 3 columnas aun daba 535 px (la columna de etiquetas del QFormLayout
++        # mide 216 y "Curva de boca" 148), asi que caben 2 por fila.
++        layout = QGridLayout(box)
 +        layout.setContentsMargins(0, 0, 0, 0)
-+        for text, attr in items:
++        layout.setHorizontalSpacing(8)
++        layout.setVerticalSpacing(2)
++        columns = 2
++        for index, (text, attr) in enumerate(items):
 +            default = bool(defaults.get(attr, False))
 +            self._flag_defaults[attr] = default
 +            checkbox = QCheckBox(text)
@@ -4034,7 +4076,7 @@ index 6ea02fb..955fa99 100644
 +            # (set_model) los checkboxes deben escribir en el modelo activo,
 +            # no en el que existia al construir el panel.
 +            checkbox.toggled.connect(lambda checked, name=attr: self._apply_flag(name, checked))
-+            layout.addWidget(checkbox)
++            layout.addWidget(checkbox, index // columns, index % columns)
 +            self._flags.append((checkbox, attr))
 +        if label is None:
 +            self._form.addRow(box)
@@ -4052,7 +4094,7 @@ index 6ea02fb..955fa99 100644
          self.on_change()
  
      def _set_master(self, checked: bool) -> None:
-@@ -155,49 +259,196 @@ class FeaturePanel(QWidget):
+@@ -155,49 +267,196 @@ class FeaturePanel(QWidget):
          self.model.set_show_features(checked)
          self.on_change()
  
@@ -10278,10 +10320,10 @@ index 51a3600..ec4e01c 100644
      unittest.main()
 diff --git a/loomis_head/test_ui_offscreen.py b/loomis_head/test_ui_offscreen.py
 new file mode 100644
-index 0000000..ffca1e5
+index 0000000..2d12a8c
 --- /dev/null
 +++ b/loomis_head/test_ui_offscreen.py
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,367 @@
 +# SPDX-FileCopyrightText: 2026 imboolean
 +# SPDX-License-Identifier: GPL-3.0-only
 +
@@ -10562,6 +10604,42 @@ index 0000000..ffca1e5
 +        self.assertIsInstance(summary, str)
 +        self.assertIn("aa=0", summary)
 +        self.assertIn("refresh=0", summary)
++
++    def test_features_panel_cabe_en_520(self):
++        """La pestana Rasgos no puede pedir mas ancho del que tiene el docker.
++
++        El scroll del docker oculta la barra horizontal
++        (``ui/LoomisDocker.ui``), asi que un minimo mas ancho que el marco
++        recorta por la derecha los ultimos checkboxes/sliders. Con la fila
++        "Mostrar" en un unico QHBoxLayout el panel pedia 678 px a 520 (con 3
++        columnas aun 535, por la etiqueta del QFormLayout y "Curva de boca").
++        """
++        docker = self.docker
++        docker.resize(520, 900)
++        docker.show()
++        self.app.processEvents()
++        # ``feature_panel`` es un QWidget dentro del QStackedWidget de la
++        # pestana (``loomis_head_plugin.py``), no un QScrollArea.
++        panel = docker.feature_panel
++        width = panel.minimumSizeHint().width()
++        self.assertLessEqual(
++            width,
++            500,
++            f"el panel de Rasgos pide {width} px de ancho minimo",
++        )
++
++    def test_flag_rows_siguen_conectadas(self):
++        """El cambio de layout no puede romper la conexion checkbox -> modelo."""
++        docker = self.docker
++        panel = docker.feature_panel
++        panel.sync_from_model()
++        boxes = {attr: checkbox for checkbox, attr in panel._flags}
++        box = boxes["show_ears"]
++        before = bool(docker.loomis_head.show_ears)
++        box.setChecked(not before)
++        self.assertNotEqual(bool(docker.loomis_head.show_ears), before)
++        box.setChecked(before)
++        self.assertEqual(bool(docker.loomis_head.show_ears), before)
 +
 +    def _seed_grimorio(self, head):
 +        """Crea el grimorio.json del sandbox (XDG_DATA_HOME temporal)."""
