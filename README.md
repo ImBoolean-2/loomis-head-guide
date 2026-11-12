@@ -37,8 +37,9 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
   detail 0 / 1 / 2, mouth band, ear with concha and plane banding, neck and base included —
   with the **Show neck** and **Shade planes** toggles. It is still a faceted low-poly
   reference, not a smooth anatomical sculpt (licensed **CC BY 4.0** with attribution, see
-  [LICENSE-ASSETS.md](LICENSE-ASSETS.md); **local build**: the public ZIP is published
-  after the pending fixes).
+  [LICENSE-ASSETS.md](LICENSE-ASSETS.md)). It is a **work in progress**: profile, cranium
+  vault and ear are still low-poly and the Asaro panel is minimal. See
+  [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
 - **Real 3D preview**: drag to orbit freely (arcball), `Shift`/right-drag to roll, wheel to
   zoom, double-click to reset. View shortcuts for front, 3/4, profile, back and top.
 - **Pivot and redraw (0.7.4, delay in 0.7.5, Move in 0.7.8, review fixes in 0.7.9,
@@ -104,8 +105,8 @@ The improvements in this fork are by **imboolean** (see [CREDITS.md](CREDITS.md)
 
 ### ZIP (recommended)
 
-1. Download `release/loomis-head-guide-0.7.2.zip` (last public build; 0.7.3 to 0.7.10 are
-   local-only).
+1. Download `release/loomis-head-guide-0.7.12.zip` (last public build; 0.7.3 to 0.7.11
+   were local-only).
 2. In Krita: **Tools → Scripts → Import Python Plugins** and choose the ZIP.
 3. Restart Krita and open **Settings → Configure Krita → Python Plugin Manager**; enable
    **Loomis Method Head Guide**.
@@ -186,6 +187,13 @@ uses the same wrapper with `"model": "asaro"` (see `heads/example-asaro.json`).
 
 ## Asaro head
 
+> **Work in progress.** The Asaro model is a plane study, **not** a proportion reference.
+> Its design and configuration are still poor: the profile, the cranium vault and the ear
+> are low-poly and do not hold up in a demanding side view, the plane transitions are
+> coarse at detail 0, and the Asaro panel offers only planes, edges, shading and detail
+> (no fine control of planes or proportions). Use it as a block-in aid for planes; Loomis
+> is the main engine and the one that gets the fine adjustments.
+
 The second model is a low-poly study of the **Asaro head** (the planar head used to learn
 the planes of the face). It is drawn as face contours, not as a shaded sculpt:
 
@@ -221,9 +229,10 @@ every silhouette is a chain of segments. Use it to place planes, then draw over 
 > retopologised derivative of "Asaro-head" by **ivan4akir** (CC BY 4.0), whose design is by
 > **John Asaro**. Keep the attribution and the modification notice if you redistribute it;
 > the full text and a copy-paste credit line are in
-> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. 0.7.10
-> is a **local build**: the public ZIP ships only after validating it in Krita; until then
-> `release/` carries the 0.7.2 artifacts, the last public build.
+> [LICENSE-ASSETS.md](LICENSE-ASSETS.md). The plugin code itself stays GPL-3.0-only. The
+> current public build is **0.7.12** (`release/loomis-head-guide-0.7.12.zip` plus the
+> cumulative patch); its release notes are in
+> [release/RELEASE-NOTES-0.7.12.md](release/RELEASE-NOTES-0.7.12.md).
 
 ## Development
 

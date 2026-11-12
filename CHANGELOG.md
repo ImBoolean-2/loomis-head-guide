@@ -472,3 +472,64 @@ validar en Krita.
   generan solo después de validar el build en Krita (Move real, rotar, cambiar de modelo,
   guardar y reabrir el `.kra`). `release/` sigue con los artefactos **0.7.2**, la última
   build pública (0.7.3 a 0.7.10 son locales).
+
+## 0.7.11 — 2026-11-11
+
+- **Síntoma**: al rotar o mover la cabeza, el lienzo la dibujaba **cortada** por una línea
+  vertical recta (o directamente no la dibujaba) hasta cerrar y reabrir el `.kra`. El docker
+  (preview) siempre la mostraba completa.
+- **Causa**: los shapes y el SVG eran correctos; lo que Krita no refrescaba era la **caché y
+  la proyección de la capa vectorial**. `draw_lines_with_vectors()` borra todos los shapes y
+  vuelve a importar el SVG en la misma pasada, y el plugin nunca forzaba un repintado
+  completo de la capa ni de la proyección. Krita solo reinvalida el rectángulo que le avisa
+  cada shape (`Shape.remove()` y `addShapesFromSvg()` van por strokes distintos con
+  `waitForDone`, sin unión garantizada), así que la parte nueva que caía fuera de ese
+  rectángulo no llegaba nunca al lienzo ni al guardado.
+- **Evidencia medida** en un `.kra` guardado por el usuario (2560×1440 a 300 ppp):
+  `BTRxSU/layers/layer2.shapelayer/content.svg` contenía la geometría completa (renderizada
+  aparte con ImageMagick, bbox x 1008..1279 px), mientras que `mergedimage.png` del mismo
+  `.kra` (lo que pinta Krita) tenía la cabeza cortada en x 1178, con el resto en blanco;
+  confirmaba que el SVG estaba bien y lo que fallaba era la proyección.
+- **Fix**: `_force_layer_rerender()`, llamada justo después de reaplicar el delta en
+  `draw_lines_with_vectors()`, limpia la caché entera de la capa con el toggle de
+  `setAntialiased()` (se cambia el valor y se deja como estaba; es el remedio que usa la
+  propia Krita para rehacer una capa vectorial) y después llama a
+  `Document.refreshProjection()` para que el lienzo y el guardado lo vean ya. Nunca lanza:
+  si la capa o el documento no exponen la API, devuelve `aa=0,refresh=0`. El resumen se
+  añade al final de la línea `draw` de `pivot.log` como `rerender=aa=…,refresh=…`.
+- **Tests**: dos nuevos en `test_ui_offscreen.py` (7 OK en el flatpak; antes 5): el toggle
+  de antialias deja el valor original y refresca la proyección una vez, y una capa sin
+  `isAntialiased()` con un documento sin `refreshProjection()` no lanza. `test_generator` +
+  `test_asaro` siguen en **153 OK**.
+- **Aviso — build local**: 0.7.11 es **solo local**. No hay **ZIP ni patch 0.7.11**; se
+  generan solo después de validar en Krita real (rotar, mover, cambiar de modelo, guardar y
+  reabrir). `release/` sigue con los artefactos **0.7.2**, la última build pública (0.7.3 a
+  0.7.11 son locales).
+
+## 0.7.12 — 2026-11-12
+
+- **Compatibilidad con Grimorio de Color 0.7.0 (P2)**: `_write_head_to_grimorio()` dejaba
+  `grimorio.json` y su `grimorio.json.loomis.bak` en **0644** porque el fichero se
+  reescribía a través de un temporal nuevo. El Grimorio lo crea con `mkstemp` en **0600**
+  (contiene `privateMode` y datos privados), así que Loomis rebajaba su protección.
+  Ahora lee el modo del original y lo aplica al temporal antes de `os.replace()` y al
+  backup; si `stat()` falla usa `0o600`.
+- **Compatibilidad con Grimorio de Color 0.7.0 (P3)**: `target["head"] = data` sustituía el
+  bloque entero, de modo que un `head` antiguo o de una versión futura perdía
+  `lightAzimuth`/`lightElevation`/`lightIntensity`/`shadowMode`/`showShadow` y cualquier
+  clave desconocida al guardar desde Loomis (aunque el Grimorio las conserve). Ahora el
+  head previo se **fusiona** con el nuevo y los valores nuevos ganan.
+- **Evidencia QA** (`/tmp/opencode/QA-LOOMIS-GRIMORIO.md`, 110/110 PASS sobre 0.7.11):
+  P2 medido como `antes: 0o600 → después: 0o644 | backup: 0o644`; P3 reproducido con
+  `apply_preset(spinela)` + guardar, que borraba las 5 claves de luz.
+- **Tests**: dos nuevos en `test_ui_offscreen.py` (9 OK en el flatpak; antes 7): preserva
+  0600 en JSON y backup, y conserva `lightAzimuth`/`futureKey` mientras `scale` pasa a 1.0.
+  `test_generator` + `test_asaro` siguen en **153 OK**. E2E manual sobre una copia del JSON
+  real: 10/10 (modo, backup, claves legacy, resto del fichero y demás personajes intactos).
+- **Publicada**: `release/loomis-head-guide-0.7.12.zip` (35 entradas: 31 ficheros + 4
+  carpetas, sin `__pycache__`/`.pyc`/`.bak`) y `release/loomis-head-guide-0.7.12.patch`
+  (acumulado desde `b8a762d`, sin `release/` ni binarios; cifras exactas en
+  `release/UPSTREAM-DIFF-0.7.12.md`). El patch se verificó sobre un export limpio de `b8a762d`:
+  `git apply --check -p1` → `APPLY_CHECK_OK` y, tras aplicar,
+  `python3 -m unittest test_generator test_asaro` → **153 OK**. 0.7.12 es la última build
+  pública; 0.7.3 a 0.7.11 siguen siendo locales y 0.7.2 queda como histórico en `release/`.

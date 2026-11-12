@@ -119,10 +119,21 @@ Si el docker no aparece, el plugin escribe dos logs en
 `init.log` (arranque del panel y traceback si falla). Son los primeros ficheros que hay
 que mirar antes de tocar el código.
 
+## Estado de los modelos
+
+- **Loomis** es el motor principal: proporciones, guías, rasgos y pelo con ajuste fino.
+- **Asaro sigue en proceso.** Es un estudio de planos low-poly, **no** una referencia de
+  proporciones: el perfil, la bóveda del cráneo y la oreja todavía son pobres, las
+  transiciones entre planos son bastas en detalle 0 y su panel solo ofrece planos,
+  aristas, relleno y detalle. Úsalo para bloquear planos, no como anatomía final. La malla
+  es un derivado CC BY 4.0 (ver `CREDITS.md` y `LICENSE-ASSETS.md`).
+
 ## Compatibilidad
 
-Probado en Krita 5.3.4.1 (Flatpak, PyQt5). Krita 6 usa PyQt6 y aún no está soportado;
-haría falta un shim `qt_compat` como el del Grimorio de Color.
+Probado en Krita 5.3.4.1 (Flatpak, PyQt5). Krita 6 / PyQt6 pasa por el shim
+`qt_compat.py`, pero **no se ha probado**. La build se verifica con 153 tests de
+generador y malla, 9 tests de UI offscreen y la QA de compatibilidad con Grimorio de
+Color 0.7.0.
 
 ## Créditos
 

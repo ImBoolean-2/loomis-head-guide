@@ -24,7 +24,9 @@ nombre con paquete (``-m unittest loomis_head.test_ui_offscreen``) no sirve:
 """
 from __future__ import annotations
 
+import json
 import os
+import stat
 import sys
 import tempfile
 import types
@@ -213,6 +215,116 @@ class DockerOffscreenTests(unittest.TestCase):
         # El sondeo (120 ms) no puede romper con la capa o el documento a None.
         docker.sync_manual_position()
         self.assertEqual(len(docker._visible_position()), 2)
+
+    def test_force_layer_rerender_resets_antialias_and_projection(self):
+        """Invalida la cache de la capa (toggle de antialias) y la proyeccion.
+
+        Krita solo reinvalida el rectangulo que le avisa cada shape; al
+        reconstruir el SVG entero en la misma pasada la cabeza puede quedar
+        cortada hasta reabrir el documento. El remedio es limpiar la cache de
+        la capa y refrescar la proyeccion, sin dejar el antialias cambiado.
+        """
+        docker = self.docker
+        calls = []
+
+        class FakeLayer:
+            def isAntialiased(self):
+                return True
+
+            def setAntialiased(self, value):
+                calls.append(value)
+
+        class FakeDoc:
+            def __init__(self):
+                self.refreshed = 0
+
+            def refreshProjection(self):
+                self.refreshed += 1
+
+        layer = FakeLayer()
+        doc = FakeDoc()
+        docker.loomis_layer = layer
+        docker.doc = doc
+        try:
+            summary = docker._force_layer_rerender()
+        finally:
+            docker.loomis_layer = None
+            docker.doc = None
+        # Cambia el valor y lo deja como estaba: el final es el original.
+        self.assertEqual(calls, [False, True])
+        self.assertTrue(calls[-1])
+        self.assertEqual(doc.refreshed, 1)
+        self.assertIsInstance(summary, str)
+        self.assertIn("aa=1", summary)
+        self.assertIn("refresh=1", summary)
+
+    def test_force_layer_rerender_tolera_capa_sin_api(self):
+        """Sin antialias ni refreshProjection no lanza: devuelve el resumen."""
+        docker = self.docker
+
+        class FakeLayer:
+            def isAntialiased(self):
+                raise AttributeError("capa sin antialias")
+
+        docker.loomis_layer = FakeLayer()
+        # Sin ``refreshProjection``: el documento real siempre la tiene, pero
+        # un wrapper muerto o un stub no pueden romper el dibujo.
+        docker.doc = types.SimpleNamespace()
+        try:
+            summary = docker._force_layer_rerender()
+        finally:
+            docker.loomis_layer = None
+            docker.doc = None
+        self.assertIsInstance(summary, str)
+        self.assertIn("aa=0", summary)
+        self.assertIn("refresh=0", summary)
+
+    def _seed_grimorio(self, head):
+        """Crea el grimorio.json del sandbox (XDG_DATA_HOME temporal)."""
+        path = self.docker._grimorio_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 2,
+            "characters": [{"id": "kai-marquez", "name": "Kai", "head": head}],
+            "activeCharacterId": "kai-marquez",
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        backup = path.with_name(path.name + ".loomis.bak")
+        self.addCleanup(backup.with_name(backup.name + ".tmp").unlink, missing_ok=True)
+        self.addCleanup(path.with_name(path.name + ".loomis.tmp").unlink, missing_ok=True)
+        self.addCleanup(backup.unlink, missing_ok=True)
+        self.addCleanup(path.unlink, missing_ok=True)
+        return path, backup
+
+    def test_write_head_preserva_modo_del_json(self):
+        """Escribir el head no rebaja el 0600 que pone el Grimorio.
+
+        El JSON tiene ``privateMode``: el Grimorio lo crea con ``mkstemp``. Al
+        pasar por un temporal nuevo, Loomis no debe dejarlo en 0644 ni el backup.
+        """
+        path, backup = self._seed_grimorio({})
+        os.chmod(path, 0o600)
+        wrote = self.docker._write_head_to_grimorio(
+            "kai-marquez", {"model": "loomis", "scale": 1.0}
+        )
+        self.assertTrue(wrote)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+
+    def test_write_head_conserva_claves_desconocidas(self):
+        """El head es compartido y opaco: lo que Loomis no conoce no se tira."""
+        path, _backup = self._seed_grimorio(
+            {"lightAzimuth": 0.3, "futureKey": {"nested": [1, 2]}, "scale": 9.0}
+        )
+        wrote = self.docker._write_head_to_grimorio(
+            "kai-marquez", {"model": "loomis", "scale": 1.0}
+        )
+        self.assertTrue(wrote)
+        head = json.loads(path.read_text(encoding="utf-8"))["characters"][0]["head"]
+        self.assertEqual(head["lightAzimuth"], 0.3)
+        self.assertEqual(head["futureKey"], {"nested": [1, 2]})
+        self.assertEqual(head["scale"], 1.0)
+        self.assertEqual(head["model"], "loomis")
 
 
 if __name__ == "__main__":

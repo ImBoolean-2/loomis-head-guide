@@ -2193,6 +2193,7 @@ class LoomisProportionsDocker(DockWidget):
             # Ya esta en los shapes nuevos (o era identidad): el sondeo puede
             # volver a capturar sin miedo.
             self._transform_pending_apply = False
+            rerender = self._force_layer_rerender()
             self._pivot_shape = next(
                 (shape for shape in reversed(added) if _is_pivot_shape(shape)), None
             )
@@ -2216,6 +2217,7 @@ class LoomisProportionsDocker(DockWidget):
                 f" marker={_fmt_point(self._last_pivot_position)}"
                 f" last_layer={_fmt_point(prev_layer)}"
                 f" last_marker={_fmt_point(prev_marker)}"
+                f" rerender={rerender}"
             )
             guide = self.active_guide()
             if guide is not None:
@@ -2251,6 +2253,43 @@ class LoomisProportionsDocker(DockWidget):
             'fill="#000000" fill-opacity="0" stroke="none"/>'
         )
         return svg[:-6] + marker + "</svg>"
+
+    def _force_layer_rerender(self) -> str:
+        """Rehace la cache de la capa vectorial tras reconstruir el SVG.
+
+        Krita pinta una capa vectorial en su propia cache y solo invalida el
+        rectangulo que le avisa cada shape. Al borrar y reinsertar el SVG
+        completo en la misma pasada ese rectangulo puede quedarse corto: la
+        cabeza sale cortada por una linea recta (o no sale) hasta reabrir el
+        documento, aunque ``content.svg`` guardado sea correcto.
+
+        ``KisShapeLayer::setAntialiased()`` limpia la cache entera de la capa y
+        marca como sucia su caja; es el remedio que usa la propia Krita para
+        rehacer una capa vectorial ("is it the best way to rerender the vector
+        layer?"). Se cambia el valor y se deja como estaba, y despues se
+        refresca la proyeccion para que el lienzo y el guardado lo vean ya.
+        Devuelve un resumen corto para el log; nunca lanza.
+        """
+        layer = self.loomis_layer
+        try:
+            antialiased = bool(layer.isAntialiased())
+        except (AttributeError, RuntimeError, TypeError):
+            antialiased = None
+        toggled = False
+        if antialiased is not None:
+            try:
+                layer.setAntialiased(not antialiased)
+                layer.setAntialiased(antialiased)
+                toggled = True
+            except (AttributeError, RuntimeError, TypeError):
+                toggled = False
+        refreshed = False
+        try:
+            self.doc.refreshProjection()
+            refreshed = True
+        except (AttributeError, RuntimeError, TypeError):
+            refreshed = False
+        return f"aa={int(toggled)},refresh={int(refreshed)}"
 
     def reset_view(self):
         # Reset rotation only; leave the scale slider and current scale untouched.
@@ -2546,16 +2585,30 @@ class LoomisProportionsDocker(DockWidget):
                 break
         if target is None:
             return False
-        target["head"] = data
+        # El bloque ``head`` es compartido y opaco para el Grimorio: se fusiona
+        # para no tirar lo que este Loomis no conoce (legacy de luz, claves
+        # futuras); los valores nuevos ganan.
+        previous = target.get("head")
+        merged = dict(previous) if isinstance(previous, dict) else {}
+        merged.update(data)
+        target["head"] = merged
         backup = path.with_name(path.name + ".loomis.bak")
         backup_tmp = path.with_name(path.name + ".loomis.bak.tmp")
         temp = path.with_name(path.name + ".loomis.tmp")
+        # El Grimorio crea el JSON en 0600 (contiene ``privateMode``): al pasar
+        # por un temporal nuevo hay que devolverle su modo, no dejarlo en 0644.
+        try:
+            mode = path.stat().st_mode & 0o777
+        except OSError:
+            mode = 0o600
         try:
             # Backup en CADA escritura (no solo la primera): el Grimorio puede
             # haber guardado cambios de color desde la ultima vez.
             backup_tmp.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.chmod(backup_tmp, mode)
             os.replace(backup_tmp, backup)
             temp.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.chmod(temp, mode)
             os.replace(temp, path)
         except OSError:
             return False
